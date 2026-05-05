@@ -5,7 +5,7 @@ import { CapsuleCollider, RigidBody, RigidBodyApi, useRapier } from '@react-thre
 import { useKeyboardControls } from '@react-three/drei';
 import { useCharacterControls } from '../hooks/useCharacterControls';
 import { calculateMovement, createJumpImpulse, createMovementVelocity } from '../utils/physics';
-import { useMobileControls } from '../contexts/MobileControlsContext';
+import { useMobileControls } from '../contexts/useMobileControls';
 import { CharacterModel } from './CharacterModel';
 
 export type CharacterState = {
@@ -18,6 +18,7 @@ export type CharacterState = {
 
 export type CharacterControllerHandle = {
   getPosition: () => Vector3;
+  getIsGrounded: () => boolean;
   setPosition: (position: Vector3) => void;
   setVelocity: (velocity: { x: number; y: number; z: number }) => void;
   reset: (position: Vector3) => void;
@@ -147,7 +148,7 @@ export const CharacterController = React.forwardRef<CharacterControllerHandle, C
     if (movement) {
       const sprintMultiplier = movement.sprint ? controls.sprintMultiplier : 1;
       const moveForce = controls.moveSpeed * (isGrounded ? 1 : controls.airControl);
-      let velocity = createMovementVelocity(
+      const velocity = createMovementVelocity(
         movement.normalizedX,
         movement.normalizedZ,
         moveForce * sprintMultiplier,
@@ -195,6 +196,7 @@ export const CharacterController = React.forwardRef<CharacterControllerHandle, C
         translation?.z || 0
       );
     },
+    getIsGrounded: () => state.isGrounded,
     setPosition: (position: Vector3) => {
       rigidBody.current?.setTranslation(position, true);
     },
@@ -206,7 +208,7 @@ export const CharacterController = React.forwardRef<CharacterControllerHandle, C
       rigidBody.current?.setLinvel({ x: 0, y: 0, z: 0 }, true);
       rigidBody.current?.setAngvel({ x: 0, y: 0, z: 0 }, true);
     },
-  }), []);
+  }), [state.isGrounded]);
 
   return (
     <RigidBody

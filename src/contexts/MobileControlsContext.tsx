@@ -1,18 +1,5 @@
-import React, { createContext, useContext, useState } from 'react';
-
-type MobileControlsContextType = {
-  isJumping: boolean;
-  setIsJumping: (jumping: boolean) => void;
-  movement: { x: number, y: number };
-  setMovement: (movement: { x: number, y: number }) => void;
-};
-
-const MobileControlsContext = createContext<MobileControlsContextType>({
-  isJumping: false,
-  setIsJumping: () => {},
-  movement: { x: 0, y: 0 },
-  setMovement: () => {},
-});
+import { useState } from 'react';
+import { MobileControlsContext } from './mobileControlsStore';
 
 export function MobileControlsProvider({ children }: { children: React.ReactNode }) {
   const [isJumping, setIsJumping] = useState(false);
@@ -23,8 +10,4 @@ export function MobileControlsProvider({ children }: { children: React.ReactNode
       {children}
     </MobileControlsContext.Provider>
   );
-}
-
-export function useMobileControls() {
-  return useContext(MobileControlsContext);
 }

@@ -77,9 +77,17 @@ export const MAP_BLOCK_CATALOG: ReadonlyArray<MapCatalogItem> = [
     size: [1.8, 1.8, 1.8],
   },
   {
+    kind: 'spawn',
+    label: 'Spawn',
+    description: 'Player start point',
+    color: '#FACC15',
+    swatchClass: 'bg-yellow-400',
+    size: [1.8, 1, 1.8],
+  },
+  {
     kind: 'checkpoint',
     label: 'Checkpoint',
-    description: 'Respawn marker',
+    description: 'Progress marker',
     color: '#38BDF8',
     swatchClass: 'bg-cyan-400',
     size: [2.6, 2, 2.6],
@@ -107,6 +115,14 @@ export const MAP_BLOCK_CATALOG: ReadonlyArray<MapCatalogItem> = [
     color: '#94A3B8',
     swatchClass: 'bg-slate-400',
     size: [3, 5, 3],
+  },
+  {
+    kind: 'sci-fi-room',
+    label: 'Sci-Fi Room',
+    description: 'Modular parkour room',
+    color: '#38BDF8',
+    swatchClass: 'bg-indigo-400',
+    size: [12, 4, 12],
   },
 ];
 
@@ -136,6 +152,14 @@ export function snapPlacement(point: { x: number; y: number; z: number }, size: 
     snap(point.x),
     Math.max(size[1] * 0.5, Math.round((point.y + size[1] * 0.5) / 0.5) * 0.5),
     snap(point.z),
+  ] as [number, number, number];
+}
+
+export function alignToSurface(point: { x: number; y: number; z: number }, size: [number, number, number]) {
+  return [
+    point.x,
+    point.y + size[1] * 0.5,
+    point.z,
   ] as [number, number, number];
 }
 

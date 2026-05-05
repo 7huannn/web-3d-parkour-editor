@@ -24,7 +24,6 @@ type GameUIProps = {
   readonly onResetTransform: () => void;
   readonly onTextureSelect: (file: File | null) => void;
   readonly onProjectionChange: (field: 'near' | 'far' | 'offsetX' | 'height' | 'distance', value: number) => void;
-  readonly onLoadSample?: (name: 'modern' | 'compact') => void;
 };
 
 function formatTime(elapsed: number) {
@@ -65,7 +64,6 @@ export function GameUI({
   onResetTransform,
   onTextureSelect,
   onProjectionChange,
-  onLoadSample,
 }: GameUIProps) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -235,23 +233,6 @@ export function GameUI({
               />
             </div>
 
-            <div className="bg-white/10 backdrop-blur-sm rounded-lg px-4 py-3 border border-white/10">
-              <div className="text-sm uppercase tracking-wide opacity-80">Samples</div>
-              <div className="mt-2 flex gap-2">
-                <button
-                  className="px-3 py-1 rounded-md bg-gradient-to-br from-sky-600 to-indigo-600 text-white text-sm"
-                  onClick={() => onLoadSample && onLoadSample('modern')}
-                >
-                  Modern Sample
-                </button>
-                <button
-                  className="px-3 py-1 rounded-md bg-white/10 text-sm"
-                  onClick={() => onLoadSample && onLoadSample('compact')}
-                >
-                  Compact Sample
-                </button>
-              </div>
-            </div>
           </div>
         )}
       </div>

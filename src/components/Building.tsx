@@ -1,17 +1,30 @@
+import { useMemo } from 'react';
+import type { ThreeEvent } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import { RigidBody } from '@react-three/rapier';
 
 type BuildingProps = Readonly<{
   position?: [number, number, number];
   rotation?: [number, number, number];
+  modelUrl?: string;
   scale?: number;
+  baseOffsetY?: number;
+  onClick?: (event: ThreeEvent<MouseEvent>) => void;
 }>;
 
-export function Building({ position = [0, 0, 0], rotation = [0, 0, 0], scale = 1 }: BuildingProps) {
-  const { scene } = useGLTF('/models/building.glb');
+export function Building({
+  position = [0, 0, 0],
+  rotation = [0, 0, 0],
+  modelUrl = '/models/building.glb',
+  scale = 1,
+  baseOffsetY = 0,
+  onClick,
+}: BuildingProps) {
+  const { scene } = useGLTF(modelUrl);
+  const model = useMemo(() => scene.clone(true), [scene]);
 
   // Enable shadows for all meshes in the model
-  scene.traverse((child) => {
+  model.traverse((child) => {
     if ('material' in child) {
       child.castShadow = true;
       child.receiveShadow = true;
@@ -20,7 +33,9 @@ export function Building({ position = [0, 0, 0], rotation = [0, 0, 0], scale = 1
 
   return (
     <RigidBody type="fixed" colliders="trimesh" position={position} rotation={rotation}>
-      <primitive object={scene} scale={scale} />
+      <group position={[0, baseOffsetY, 0]} onClick={onClick}>
+        <primitive object={model} scale={scale} />
+      </group>
     </RigidBody>
   );
 }

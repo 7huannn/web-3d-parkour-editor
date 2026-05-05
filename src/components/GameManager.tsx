@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useKeyboardControls } from '@react-three/drei';
 import { Vector3 } from 'three';
-import { useMobileControls } from '../contexts/MobileControlsContext';
+import { useMobileControls } from '../contexts/useMobileControls';
 import type { EditorMode, GameStatus, MapBlock } from '../types/game';
 import type { CharacterControllerHandle } from './CharacterController';
 
@@ -10,11 +10,13 @@ type GameManagerProps = {
   characterRef: React.RefObject<CharacterControllerHandle>;
   editorMode: EditorMode;
   status: GameStatus;
+  runVersion: number;
   setStatus: (status: GameStatus) => void;
   setElapsed: (elapsed: number) => void;
   checkpointIndex: number | null;
   setCheckpointIndex: (index: number | null) => void;
   onCheckpoint: (label: string) => void;
+  onSafeSpawnChange: (position: [number, number, number]) => void;
   blocks: MapBlock[];
 };
 
@@ -30,25 +32,29 @@ export function GameManager({
   characterRef,
   editorMode,
   status,
+  runVersion,
   setStatus,
   setElapsed,
   checkpointIndex,
   setCheckpointIndex,
   onCheckpoint,
+  onSafeSpawnChange,
   blocks,
 }: GameManagerProps) {
   const [, getKeys] = useKeyboardControls();
   const { movement, isJumping } = useMobileControls();
   const elapsedRef = useRef(0);
   const lastUiUpdateRef = useRef(0);
+  const lastSafeUpdateRef = useRef(0);
 
   useEffect(() => {
-    if (status === 'ready') {
+    if (status === 'ready' || status === 'playing') {
       elapsedRef.current = 0;
       lastUiUpdateRef.current = 0;
+      lastSafeUpdateRef.current = 0;
       setElapsed(0);
     }
-  }, [status, setElapsed]);
+  }, [runVersion, status, setElapsed]);
 
   useFrame((_, delta) => {
     const position = characterRef.current?.getPosition();
@@ -87,13 +93,19 @@ export function GameManager({
       return;
     }
 
+    const hazardBlocks = blocks.filter((block) => block.kind === 'hazard');
+    const isInHazard = hazardBlocks.some((block) => isInsideBox(position, block));
+    if (!isInHazard && characterRef.current?.getIsGrounded() && elapsedRef.current - lastSafeUpdateRef.current > 0.25) {
+      lastSafeUpdateRef.current = elapsedRef.current;
+      onSafeSpawnChange([position.x, position.y + 0.2, position.z]);
+    }
+
     const finishBlocks = blocks.filter((block) => block.kind === 'finish');
     if (finishBlocks.some((block) => isInsideBox(position, block))) {
       setStatus('won');
       return;
     }
 
-    const hazardBlocks = blocks.filter((block) => block.kind === 'hazard');
     for (const hazard of hazardBlocks) {
       if (isInsideBox(position, hazard)) {
         setStatus('lost');

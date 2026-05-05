@@ -21,10 +21,12 @@ export type MapBlockKind =
   | 'cylinder'
   | 'wheel'
   | 'teapot'
+  | 'spawn'
   | 'checkpoint'
   | 'hazard'
   | 'finish'
-  | 'building';
+  | 'building'
+  | 'sci-fi-room';
 
 export type MapBlock = {
   id: string;

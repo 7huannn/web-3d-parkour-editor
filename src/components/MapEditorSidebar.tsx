@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
 import type { EditorMode, MapBlockKind } from '../types/game';
-import { MAP_BLOCK_CATALOG } from './mapBuilderConfig';
-
-type SampleLoader = (name: 'modern' | 'compact') => void;
+import { getCatalogItem, MAP_BLOCK_CATALOG } from './mapBuilderConfig';
 
 type MapEditorSidebarProps = {
   readonly mode: EditorMode;
@@ -12,7 +10,6 @@ type MapEditorSidebarProps = {
   readonly onSelectKind: (kind: MapBlockKind) => void;
   readonly onPlay: () => void;
   readonly onResetMap: () => void;
-  readonly onLoadSample?: SampleLoader;
 };
 
 export function MapEditorSidebar({
@@ -23,9 +20,10 @@ export function MapEditorSidebar({
   onSelectKind,
   onPlay,
   onResetMap,
-  onLoadSample,
 }: MapEditorSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const selectedItem = getCatalogItem(selectedKind);
+
   return (
     <aside className={`fixed left-4 top-4 bottom-4 z-30 pointer-events-auto text-white ${collapsed ? 'w-14' : 'w-80'}`}>
       <div className={`h-full rounded-2xl border border-white/10 bg-slate-950/80 backdrop-blur-xl shadow-2xl shadow-black/30 flex flex-col overflow-hidden ${collapsed ? 'items-center' : ''}`}>
@@ -70,7 +68,7 @@ export function MapEditorSidebar({
 
               <div className="rounded-xl border border-white/10 bg-white/5 p-3">
                 <div className="text-xs uppercase tracking-[0.22em] text-white/50">Selected block</div>
-                <div className="mt-1 text-lg font-semibold capitalize">{selectedKind.replace('-', ' ')}</div>
+                <div className="mt-1 text-lg font-semibold">{selectedItem.label}</div>
                 <div className="mt-1 text-sm text-white/65">Blocks on map: {blockCount}</div>
               </div>
 
@@ -99,25 +97,6 @@ export function MapEditorSidebar({
                 </div>
               </div>
 
-              {/* Samples section */}
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
-                <div className="text-sm uppercase tracking-wide opacity-80">Samples</div>
-                <div className="mt-2 grid gap-2">
-                  <button
-                    className="px-3 py-2 rounded-md bg-gradient-to-br from-sky-600 to-indigo-600 text-white font-semibold"
-                    onClick={() => onLoadSample && onLoadSample('modern')}
-                  >
-                    Load Modern Sample
-                  </button>
-                  <button
-                    className="px-3 py-2 rounded-md bg-white/5 text-white/80 hover:bg-white/10"
-                    onClick={() => onLoadSample && onLoadSample('compact')}
-                  >
-                    Compact Sample
-                  </button>
-                </div>
-              </div>
-
               <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-white/70 leading-relaxed">
                 <div className="font-semibold text-white">How it works</div>
                 <div className="mt-1">1. Pick a block from the palette.</div>
@@ -128,20 +107,16 @@ export function MapEditorSidebar({
           </>
         )}
 
-        <div className="mt-auto border-t border-white/10 p-4 grid grid-cols-2 gap-2 bg-slate-950/90">
-          <button
-            className="rounded-xl bg-white/10 px-3 py-2 text-sm font-semibold hover:bg-white/15 transition"
-            onClick={onResetMap}
-          >
-            Clear map
-          </button>
-          <button
-            className="rounded-xl bg-amber-500 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-400 transition"
-            onClick={onPlay}
-          >
-            Start run
-          </button>
-        </div>
+        {!collapsed && (
+          <div className="mt-auto border-t border-white/10 p-4 bg-slate-950/90">
+            <button
+              className="w-full rounded-xl bg-white/10 px-3 py-2 text-sm font-semibold hover:bg-white/15 transition"
+              onClick={onResetMap}
+            >
+              Clear map
+            </button>
+          </div>
+        )}
       </div>
     </aside>
   );

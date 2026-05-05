@@ -11,6 +11,7 @@ type MapSceneProps = {
   readonly renderMode: RenderMode;
   readonly textureUrl: string | null;
   readonly transformState: TransformState;
+  readonly showTransformPreview: boolean;
   readonly isBuildMode: boolean;
   readonly onPlaceBlock?: (point: { x: number; y: number; z: number }) => void;
 };
@@ -57,7 +58,15 @@ function TransformPreview({ renderMode, textureUrl, transformState }: Readonly<{
   );
 }
 
-export function MapScene({ blocks, renderMode, textureUrl, transformState, isBuildMode, onPlaceBlock }: MapSceneProps) {
+export function MapScene({
+  blocks,
+  renderMode,
+  textureUrl,
+  transformState,
+  showTransformPreview,
+  isBuildMode,
+  onPlaceBlock,
+}: MapSceneProps) {
   return (
     <group>
       <RigidBody type="fixed" position={[0, -0.5, 0]}>
@@ -82,15 +91,34 @@ export function MapScene({ blocks, renderMode, textureUrl, transformState, isBui
       </group>
 
       <RigidBody type="fixed" position={[0, 0.5, 0]}>
-        <mesh receiveShadow>
+        <mesh receiveShadow onClick={(event) => {
+          if (!isBuildMode || !onPlaceBlock) return;
+          event.stopPropagation();
+          onPlaceBlock(event.point);
+        }}>
           <boxGeometry args={[6, 1, 6]} />
           <meshStandardMaterial color="#4F46E5" roughness={0.8} metalness={0.1} />
         </mesh>
         <CuboidCollider args={[3, 0.5, 3]} />
       </RigidBody>
 
+      {isBuildMode && showTransformPreview && (
+        <TransformPreview
+          renderMode={renderMode}
+          textureUrl={textureUrl}
+          transformState={transformState}
+        />
+      )}
+
       {blocks.map((block) => (
-        <MapBlock key={block.id} block={block} renderMode={renderMode} textureUrl={textureUrl} />
+        <MapBlock
+          key={block.id}
+          block={block}
+          renderMode={renderMode}
+          textureUrl={textureUrl}
+          isBuildMode={isBuildMode}
+          onPlaceBlock={onPlaceBlock}
+        />
       ))}
     </group>
   );

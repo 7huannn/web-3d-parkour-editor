@@ -1,5 +1,3 @@
-import { Color } from 'three';
-
 export const ToonVertexShader = `
 varying vec3 vNormal;
 varying vec3 vViewPosition;

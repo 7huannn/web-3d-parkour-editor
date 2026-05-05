@@ -12,6 +12,14 @@ dist
 dist-ssr
 *.local
 
+# Generated/exported project bundles
+Release/
+Source/
+
+# Local submission documents
+Doc/
+Do_An_DHMT.pdf
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

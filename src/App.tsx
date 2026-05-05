@@ -21,13 +21,17 @@ import { MapScene } from './components/MapScene';
 import { GameManager } from './components/GameManager';
 import { GameUI } from './components/GameUI';
 import { MapEditorSidebar } from './components/MapEditorSidebar';
-import { createMapBlock, getCatalogItem, snapPlacement, getSampleMap } from './components/mapBuilderConfig';
+import { alignToSurface, createMapBlock, getCatalogItem, snapPlacement } from './components/mapBuilderConfig';
 import { useLightingControls } from './hooks/useLightingControls';
 import { usePostProcessingControls } from './hooks/usePostProcessingControls';
 import { Leva } from 'leva';
 import { MobileControlsProvider } from './contexts/MobileControlsContext';
 import { MobileControls } from './components/MobileControls';
 import type { EditorMode, GameStatus, MapBlock, MapBlockKind, RenderMode, TransformMode, TransformState } from './types/game';
+
+const PLAYER_SPAWN_CLEARANCE = 1.6;
+const WALKABLE_START_KINDS = new Set<MapBlockKind>(['platform', 'ramp', 'checkpoint', 'building', 'sci-fi-room']);
+const BOTTOM_ALIGNED_KINDS = new Set<MapBlockKind>(['building', 'sci-fi-room', 'spawn']);
 
 function DynamicDepthOfField({ enabled, target, focalLength, bokehScale }: {
   enabled: boolean;
@@ -60,8 +64,10 @@ function App() {
   const lighting = useLightingControls();
   const postProcessing = usePostProcessingControls();
   const characterRef = useRef<CharacterControllerHandle>(null);
+  const lastSafeSpawnRef = useRef<[number, number, number] | null>(null);
   const [status, setStatus] = useState<GameStatus>('ready');
   const [editorMode, setEditorMode] = useState<EditorMode>('build');
+  const [runVersion, setRunVersion] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [checkpointIndex, setCheckpointIndex] = useState<number | null>(null);
   const [checkpointToast, setCheckpointToast] = useState<string | null>(null);
@@ -78,6 +84,7 @@ function App() {
     height: 4,
     distance: 6,
   });
+  const [showTransformPreview, setShowTransformPreview] = useState(false);
   const defaultTransform = useRef<TransformState>({
     position: [12, 1.4, -8],
     rotation: [0, 0, 0],
@@ -89,62 +96,90 @@ function App() {
     setCheckpointToast(`${label} reached`);
   }, []);
 
+  const handleSafeSpawnChange = useCallback((position: [number, number, number]) => {
+    lastSafeSpawnRef.current = position;
+  }, []);
+
   const resetCharacter = useCallback((spawn: [number, number, number]) => {
     characterRef.current?.reset(new Vector3(spawn[0], spawn[1], spawn[2]));
   }, []);
 
+  const getSpawnMarker = useCallback((sourceBlocks: MapBlock[]) => (
+    [...sourceBlocks].reverse().find((block) => block.kind === 'spawn') ?? null
+  ), []);
+
+  const getBlockSpawn = useCallback((block: MapBlock): [number, number, number] => {
+    const groundY = BOTTOM_ALIGNED_KINDS.has(block.kind)
+      ? block.position[1] - block.size[1] * 0.5
+      : block.position[1] + block.size[1] * 0.5;
+    return [
+      block.position[0],
+      groundY + PLAYER_SPAWN_CLEARANCE,
+      block.position[2],
+    ];
+  }, []);
+
+  const getPlaySpawn = useCallback((sourceBlocks: MapBlock[]): [number, number, number] => {
+    const spawnMarker = getSpawnMarker(sourceBlocks);
+    if (spawnMarker) {
+      return getBlockSpawn(spawnMarker);
+    }
+
+    const candidate = [...sourceBlocks].reverse().find((block) => WALKABLE_START_KINDS.has(block.kind));
+    if (!candidate) {
+      return [0, 2, 0];
+    }
+
+    return getBlockSpawn(candidate);
+  }, [getBlockSpawn, getSpawnMarker]);
+
   const resetMap = useCallback(() => {
     setBlocks([]);
+    lastSafeSpawnRef.current = null;
     setCheckpointIndex(null);
     setCheckpointToast(null);
     setStatus('ready');
     setEditorMode('build');
+    setRunVersion((version) => version + 1);
     setElapsed(0);
     resetCharacter([0, 2, 0]);
   }, [resetCharacter]);
 
   const handlePlay = useCallback(() => {
+    const spawn = getPlaySpawn(blocks);
+    lastSafeSpawnRef.current = spawn;
     setEditorMode('play');
     setStatus('playing');
+    setRunVersion((version) => version + 1);
     setElapsed(0);
     setCheckpointToast(null);
     setCheckpointIndex(null);
-    resetCharacter([0, 2, 0]);
-  }, [resetCharacter]);
+    resetCharacter(spawn);
+  }, [blocks, getPlaySpawn, resetCharacter]);
 
   const handleBuildMode = useCallback(() => {
+    lastSafeSpawnRef.current = null;
     setEditorMode('build');
     setStatus('ready');
+    setRunVersion((version) => version + 1);
     setElapsed(0);
     setCheckpointToast(null);
     setCheckpointIndex(null);
     resetCharacter([0, 2, 0]);
-  }, [resetCharacter]);
-
-  const handleLoadSample = useCallback((name: 'modern' | 'compact') => {
-    const sample = getSampleMap(name);
-    setBlocks(sample);
-    // place character above first block
-    const first = sample[0];
-    if (first) {
-      const spawnY = (first.position[1] ?? 0) + 2.0;
-      resetCharacter([first.position[0], spawnY, first.position[2]]);
-    } else {
-      resetCharacter([0, 2, 0]);
-    }
-    // switch to play immediately
-    setEditorMode('play');
-    setStatus('playing');
-    setElapsed(0);
-    setCheckpointToast(null);
-    setCheckpointIndex(null);
   }, [resetCharacter]);
 
   const handlePlaceBlock = useCallback((point: { x: number; y: number; z: number }) => {
     if (editorMode !== 'build') return;
     const catalogItem = getCatalogItem(selectedKind);
-    const position = snapPlacement(point, catalogItem.size);
-    setBlocks((currentBlocks) => [...currentBlocks, createMapBlock(selectedKind, position)]);
+    const position = selectedKind === 'spawn'
+      ? alignToSurface(point, catalogItem.size)
+      : snapPlacement(point, catalogItem.size);
+    const nextBlock = createMapBlock(selectedKind, position);
+    setBlocks((currentBlocks) => (
+      selectedKind === 'spawn'
+        ? [...currentBlocks.filter((block) => block.kind !== 'spawn'), nextBlock]
+        : [...currentBlocks, nextBlock]
+    ));
   }, [editorMode, selectedKind]);
 
   useEffect(() => {
@@ -169,22 +204,35 @@ function App() {
 
   const handleRestart = useCallback(() => {
     setStatus(editorMode === 'play' ? 'playing' : 'ready');
+    setRunVersion((version) => version + 1);
     setElapsed(0);
     setCheckpointToast(null);
     if (editorMode !== 'play') {
       setCheckpointIndex(null);
     }
-    const checkpointBlocks = blocks.filter((block) => block.kind === 'checkpoint');
-    const checkpointBlock = checkpointIndex === null ? null : checkpointBlocks[checkpointIndex] ?? null;
-    if (editorMode === 'play' && checkpointBlock) {
-      resetCharacter([checkpointBlock.position[0], checkpointBlock.position[1] + 1.5, checkpointBlock.position[2]]);
+    const spawnMarker = getSpawnMarker(blocks);
+    if (editorMode === 'play' && spawnMarker) {
+      const markerSpawn = getBlockSpawn(spawnMarker);
+      lastSafeSpawnRef.current = markerSpawn;
+      resetCharacter(markerSpawn);
       return;
     }
 
-    resetCharacter([0, 2, 0]);
-  }, [blocks, checkpointIndex, editorMode, resetCharacter]);
+    const checkpointBlocks = blocks.filter((block) => block.kind === 'checkpoint');
+    const checkpointBlock = checkpointIndex === null ? null : checkpointBlocks[checkpointIndex] ?? null;
+    if (editorMode === 'play' && checkpointBlock) {
+      const checkpointSpawn = getBlockSpawn(checkpointBlock);
+      lastSafeSpawnRef.current = checkpointSpawn;
+      resetCharacter(checkpointSpawn);
+      return;
+    }
+
+    const spawn = lastSafeSpawnRef.current ?? getPlaySpawn(blocks);
+    resetCharacter(spawn);
+  }, [blocks, checkpointIndex, editorMode, getBlockSpawn, getPlaySpawn, getSpawnMarker, resetCharacter]);
 
   const nudgeTransform = useCallback((axis: 'x' | 'y' | 'z', direction: 1 | -1) => {
+    setShowTransformPreview(true);
     setTransformState((prev) => {
       const position = [...prev.position] as [number, number, number];
       const rotation = [...prev.rotation] as [number, number, number];
@@ -212,6 +260,7 @@ function App() {
   }, [transformMode]);
 
   const handleResetTransform = useCallback(() => {
+    setShowTransformPreview(false);
     setTransformState(defaultTransform.current);
   }, []);
 
@@ -302,7 +351,7 @@ function App() {
     <div className="w-full h-screen">
       <Leva collapsed />
       <MobileControlsProvider>
-        <MobileControls />
+        <MobileControls visible={editorMode === 'play'} />
         <MapEditorSidebar
           mode={editorMode}
           selectedKind={selectedKind}
@@ -318,7 +367,6 @@ function App() {
           onSelectKind={setSelectedKind}
           onPlay={handlePlay}
           onResetMap={resetMap}
-          onLoadSample={handleLoadSample}
         />
         <GameUI
           status={status}
@@ -337,7 +385,6 @@ function App() {
           onResetTransform={handleResetTransform}
           onTextureSelect={handleTextureSelect}
           onProjectionChange={handleProjectionChange}
-          onLoadSample={handleLoadSample}
         />
         <KeyboardControls
           map={[
@@ -376,6 +423,7 @@ function App() {
               renderMode={renderMode}
               textureUrl={textureUrl}
               transformState={transformState}
+              showTransformPreview={showTransformPreview}
               isBuildMode={editorMode === 'build'}
               onPlaceBlock={handlePlaceBlock}
             />
@@ -383,11 +431,13 @@ function App() {
               characterRef={characterRef}
               editorMode={editorMode}
               status={status}
+              runVersion={runVersion}
               setStatus={setStatus}
               setElapsed={setElapsed}
               checkpointIndex={checkpointIndex}
               setCheckpointIndex={setCheckpointIndex}
               onCheckpoint={handleCheckpoint}
+              onSafeSpawnChange={handleSafeSpawnChange}
               blocks={blocks}
             />
           </Physics>

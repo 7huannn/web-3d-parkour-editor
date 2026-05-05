@@ -55,7 +55,7 @@ export function CharacterModel({ isMoving, isSprinting, isGrounded }: CharacterM
       setCurrentAnimation(targetAnimation);
     }
     
-  }, [actions, isMoving, isSprinting, isGrounded]);
+  }, [actions, currentAnimation, isMoving, isSprinting, isGrounded]);
   
   return <primitive ref={group} object={scene} />;
 }

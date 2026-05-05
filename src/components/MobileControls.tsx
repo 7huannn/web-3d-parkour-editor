@@ -1,16 +1,32 @@
 import React from 'react';
-import { Circle } from 'lucide-react';
-import { useMobileControls } from '../contexts/MobileControlsContext';
+import { useMobileControls } from '../contexts/useMobileControls';
 
 const JOYSTICK_SMOOTHING = 0.2; // Slightly more smoothing for better feel
 const JOYSTICK_DEADZONE = 0.1; // Minimum movement to register
 const RETURN_TO_CENTER_SPEED = 0.15; // Slower return for smoother animation
 const CENTER_THRESHOLD = 0.01; // Smaller threshold for more precise centering
 
-type TouchZone = 'none' | 'joystick' | 'jump';
+type TouchZone = 'none' | 'joystick' | 'jump' | 'both';
+type MobileControlsProps = {
+  readonly visible?: boolean;
+};
 
-export function MobileControls() {
+export function MobileControls({ visible = true }: MobileControlsProps) {
   const { setIsJumping, setMovement } = useMobileControls();
+
+  React.useEffect(() => {
+    if (!visible) {
+      setIsJumping(false);
+      setMovement({ x: 0, y: 0 });
+    }
+  }, [setIsJumping, setMovement, visible]);
+
+  if (!visible) return null;
+
+  return <MobileControlsPanel setIsJumping={setIsJumping} setMovement={setMovement} />;
+}
+
+function MobileControlsPanel({ setIsJumping, setMovement }: ReturnType<typeof useMobileControls>) {
   const [joystickPosition, setJoystickPosition] = React.useState({ x: 0, y: 0 });
   const [targetPosition, setTargetPosition] = React.useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = React.useState(false);
@@ -77,7 +93,7 @@ export function MobileControls() {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [targetPosition]);
+  }, [returnToCenter, targetPosition]);
 
   // Separate effect for movement updates to avoid state updates during render
   React.useEffect(() => {
