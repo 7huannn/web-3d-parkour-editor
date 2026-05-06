@@ -116,14 +116,6 @@ export const MAP_BLOCK_CATALOG: ReadonlyArray<MapCatalogItem> = [
     swatchClass: 'bg-slate-400',
     size: [3, 5, 3],
   },
-  {
-    kind: 'sci-fi-room',
-    label: 'Sci-Fi Room',
-    description: 'Modular parkour room',
-    color: '#38BDF8',
-    swatchClass: 'bg-indigo-400',
-    size: [12, 4, 12],
-  },
 ];
 
 const DEFAULT_CATALOG_ITEM = MAP_BLOCK_CATALOG[0];
@@ -142,6 +134,7 @@ export function createMapBlock(kind: MapBlockKind, position: [number, number, nu
     rotation: catalogItem.rotation ?? [0, 0, 0],
     size: catalogItem.size,
     color: catalogItem.color,
+    renderMode: 'solid',
     label: catalogItem.label,
   };
 }

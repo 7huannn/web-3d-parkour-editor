@@ -2,9 +2,44 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes confetti-fall {
+  0% {
+    transform: translate3d(0, -8vh, 0) rotate(0deg);
+    opacity: 0;
+  }
+
+  10% {
+    opacity: 1;
+  }
+
+  100% {
+    transform: translate3d(var(--confetti-drift, 0px), 108vh, 0) rotate(720deg);
+    opacity: 0;
+  }
+}
+
+@keyframes victory-glow {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.victory-glow {
+  background:
+    radial-gradient(circle at 50% 28%, rgba(34, 197, 94, 0.35), transparent 40%),
+    radial-gradient(circle at 20% 0%, rgba(56, 189, 248, 0.22), transparent 35%),
+    radial-gradient(circle at 80% 5%, rgba(250, 204, 21, 0.25), transparent 32%);
+  animation: victory-glow 2s ease-in-out infinite;
+}
+
 /* Hide Leva GUI panel on mobile */
 @media (max-width: 768px) {
-  [class*="leva-c-"]:not([class*="leva-c-kYFrxY"]) {
+  [class*="leva-c-"]:not([class*="leva-c-kYFrxY"]):not(.game-taskbar) {
     display: none !important;
   }
 }

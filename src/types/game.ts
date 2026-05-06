@@ -5,6 +5,7 @@ export type EditorMode = 'build' | 'play';
 export type RenderMode = 'solid' | 'lines' | 'points';
 
 export type TransformMode = 'translate' | 'rotate' | 'scale';
+export type UiTheme = 'dark' | 'light';
 
 export type TransformState = {
   position: [number, number, number];
@@ -25,8 +26,7 @@ export type MapBlockKind =
   | 'checkpoint'
   | 'hazard'
   | 'finish'
-  | 'building'
-  | 'sci-fi-room';
+  | 'building';
 
 export type MapBlock = {
   id: string;
@@ -35,5 +35,18 @@ export type MapBlock = {
   rotation: [number, number, number];
   size: [number, number, number];
   color: string;
+  renderMode: RenderMode;
   label?: string;
+};
+
+export type SavedMapSummary = {
+  id: string;
+  name: string;
+  blockCount: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type SavedMapRecord = SavedMapSummary & {
+  blocks: MapBlock[];
 };

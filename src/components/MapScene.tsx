@@ -2,7 +2,7 @@ import { RigidBody, CuboidCollider } from '@react-three/rapier';
 import { useMemo } from 'react';
 import { TeapotGeometry } from 'three/examples/jsm/geometries/TeapotGeometry';
 import { MapBlock } from './MapBlock';
-import type { MapBlock as MapBlockType, RenderMode, TransformState } from '../types/game';
+import type { MapBlock as MapBlockType, RenderMode, TransformState, UiTheme } from '../types/game';
 import { useTexture } from '@react-three/drei';
 import { EdgesGeometry, RepeatWrapping } from 'three';
 
@@ -13,7 +13,15 @@ type MapSceneProps = {
   readonly transformState: TransformState;
   readonly showTransformPreview: boolean;
   readonly isBuildMode: boolean;
-  readonly onPlaceBlock?: (point: { x: number; y: number; z: number }) => void;
+  readonly theme: UiTheme;
+  readonly onPlaceBlock?: (payload: {
+    point: { x: number; y: number; z: number };
+    source: 'ground' | 'block';
+    blockId?: string;
+    normal?: [number, number, number];
+  }) => void;
+  readonly selectedBlockId?: string | null;
+  readonly onSelectBlock?: (id: string | null) => void;
 };
 
 function TransformPreview({ renderMode, textureUrl, transformState }: Readonly<{
@@ -65,42 +73,55 @@ export function MapScene({
   transformState,
   showTransformPreview,
   isBuildMode,
+  theme,
   onPlaceBlock,
+  selectedBlockId,
+  onSelectBlock,
 }: MapSceneProps) {
+  const isLight = theme === 'light';
+
   return (
     <group>
-      <RigidBody type="fixed" position={[0, -0.5, 0]}>
-        <mesh receiveShadow onClick={(event) => {
-          if (!isBuildMode || !onPlaceBlock) return;
-          event.stopPropagation();
-          onPlaceBlock(event.point);
-        }}>
-          <boxGeometry args={[200, 1, 200]} />
-          <meshStandardMaterial color="#0B1020" roughness={0.95} metalness={0.03} />
-        </mesh>
-        <CuboidCollider args={[100, 0.5, 100]} />
-      </RigidBody>
+      {isBuildMode && (
+        <>
+          <RigidBody type="fixed" position={[0, -0.5, 0]}>
+            <mesh receiveShadow onClick={(event) => {
+              if (!onPlaceBlock) return;
+              event.stopPropagation();
+              onPlaceBlock({
+                point: event.point,
+                source: 'ground',
+              });
+            }}>
+              <boxGeometry args={[200, 1, 200]} />
+              <meshStandardMaterial
+                color={isLight ? '#E6EDF8' : '#0B1020'}
+                roughness={0.95}
+                metalness={0.03}
+              />
+            </mesh>
+            <CuboidCollider args={[100, 0.5, 100]} />
+          </RigidBody>
 
-      <gridHelper args={[200, 40, '#334155', '#1E293B']} position={[0, 0.01, 0]} />
+          <gridHelper
+            args={[200, 40, isLight ? '#94A3B8' : '#334155', isLight ? '#CBD5E1' : '#1E293B']}
+            position={[0, 0.01, 0]}
+          />
 
-      <group position={[0, 0.02, 0]}>
-        <mesh>
-          <sphereGeometry args={[0.18, 20, 20]} />
-          <meshStandardMaterial color="#38BDF8" emissive="#38BDF8" emissiveIntensity={0.5} transparent opacity={0.75} />
-        </mesh>
-      </group>
-
-      <RigidBody type="fixed" position={[0, 0.5, 0]}>
-        <mesh receiveShadow onClick={(event) => {
-          if (!isBuildMode || !onPlaceBlock) return;
-          event.stopPropagation();
-          onPlaceBlock(event.point);
-        }}>
-          <boxGeometry args={[6, 1, 6]} />
-          <meshStandardMaterial color="#4F46E5" roughness={0.8} metalness={0.1} />
-        </mesh>
-        <CuboidCollider args={[3, 0.5, 3]} />
-      </RigidBody>
+          <group position={[0, 0.02, 0]}>
+            <mesh>
+              <sphereGeometry args={[0.18, 20, 20]} />
+              <meshStandardMaterial
+                color={isLight ? '#2563EB' : '#38BDF8'}
+                emissive={isLight ? '#2563EB' : '#38BDF8'}
+                emissiveIntensity={0.5}
+                transparent
+                opacity={0.75}
+              />
+            </mesh>
+          </group>
+        </>
+      )}
 
       {isBuildMode && showTransformPreview && (
         <TransformPreview
@@ -114,10 +135,11 @@ export function MapScene({
         <MapBlock
           key={block.id}
           block={block}
-          renderMode={renderMode}
           textureUrl={textureUrl}
           isBuildMode={isBuildMode}
           onPlaceBlock={onPlaceBlock}
+          selected={selectedBlockId === block.id}
+          onSelectBlock={onSelectBlock}
         />
       ))}
     </group>

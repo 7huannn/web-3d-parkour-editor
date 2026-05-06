@@ -21,17 +21,195 @@ import { MapScene } from './components/MapScene';
 import { GameManager } from './components/GameManager';
 import { GameUI } from './components/GameUI';
 import { MapEditorSidebar } from './components/MapEditorSidebar';
-import { alignToSurface, createMapBlock, getCatalogItem, snapPlacement } from './components/mapBuilderConfig';
+import { alignToSurface, createMapBlock, getCatalogItem, MAP_BLOCK_CATALOG, snapPlacement } from './components/mapBuilderConfig';
 import { useLightingControls } from './hooks/useLightingControls';
 import { usePostProcessingControls } from './hooks/usePostProcessingControls';
 import { Leva } from 'leva';
 import { MobileControlsProvider } from './contexts/MobileControlsContext';
 import { MobileControls } from './components/MobileControls';
-import type { EditorMode, GameStatus, MapBlock, MapBlockKind, RenderMode, TransformMode, TransformState } from './types/game';
+import type { EditorMode, GameStatus, MapBlock, MapBlockKind, RenderMode, SavedMapRecord, SavedMapSummary, TransformMode, TransformState, UiTheme } from './types/game';
 
 const PLAYER_SPAWN_CLEARANCE = 1.6;
-const WALKABLE_START_KINDS = new Set<MapBlockKind>(['platform', 'ramp', 'checkpoint', 'building', 'sci-fi-room']);
-const BOTTOM_ALIGNED_KINDS = new Set<MapBlockKind>(['building', 'sci-fi-room', 'spawn']);
+const WALKABLE_START_KINDS = new Set<MapBlockKind>(['platform', 'ramp', 'checkpoint', 'building']);
+const BOTTOM_ALIGNED_KINDS = new Set<MapBlockKind>(['building', 'spawn']);
+const THEME_STORAGE_KEY = 'map-builder-theme';
+const MAP_LIBRARY_STORAGE_KEY = 'map-builder-saved-maps-v1';
+const VALID_RENDER_MODES = new Set<RenderMode>(['solid', 'lines', 'points']);
+const VALID_BLOCK_KINDS = new Set<MapBlockKind>(MAP_BLOCK_CATALOG.map((item) => item.kind));
+
+function createMapRecordId() {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function toSafeNumber(value: unknown, fallback: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function toVector3(value: unknown, fallback: [number, number, number]): [number, number, number] {
+  if (!Array.isArray(value) || value.length < 3) {
+    return fallback;
+  }
+
+  return [
+    toSafeNumber(value[0], fallback[0]),
+    toSafeNumber(value[1], fallback[1]),
+    toSafeNumber(value[2], fallback[2]),
+  ];
+}
+
+function normalizeSavedBlock(raw: unknown): MapBlock | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const source = raw as Record<string, unknown>;
+  const kindRaw = source.kind;
+  if (typeof kindRaw !== 'string' || !VALID_BLOCK_KINDS.has(kindRaw as MapBlockKind)) {
+    return null;
+  }
+
+  const kind = kindRaw as MapBlockKind;
+  const catalogItem = getCatalogItem(kind);
+  const defaultPosition: [number, number, number] = [0, catalogItem.size[1] * 0.5, 0];
+  const renderModeRaw = source.renderMode;
+  const renderMode = typeof renderModeRaw === 'string' && VALID_RENDER_MODES.has(renderModeRaw as RenderMode)
+    ? renderModeRaw as RenderMode
+    : 'solid';
+  const size = toVector3(source.size, catalogItem.size);
+
+  return {
+    id: typeof source.id === 'string' && source.id.trim().length > 0 ? source.id : `${kind}-${createMapRecordId()}`,
+    kind,
+    position: toVector3(source.position, defaultPosition),
+    rotation: toVector3(source.rotation, catalogItem.rotation ?? [0, 0, 0]),
+    size: [
+      Math.max(0.1, size[0]),
+      Math.max(0.1, size[1]),
+      Math.max(0.1, size[2]),
+    ],
+    color: typeof source.color === 'string' && source.color.trim().length > 0 ? source.color : catalogItem.color,
+    renderMode,
+    label: typeof source.label === 'string' && source.label.trim().length > 0 ? source.label : catalogItem.label,
+  };
+}
+
+function normalizeSavedMapRecord(raw: unknown): SavedMapRecord | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const source = raw as Record<string, unknown>;
+  const name = typeof source.name === 'string' ? source.name.trim() : '';
+  if (!name) {
+    return null;
+  }
+
+  const blocks = Array.isArray(source.blocks)
+    ? source.blocks.map(normalizeSavedBlock).filter((block): block is MapBlock => block !== null)
+    : [];
+  const createdAt = toSafeNumber(source.createdAt, Date.now());
+  const updatedAt = toSafeNumber(source.updatedAt, createdAt);
+
+  return {
+    id: typeof source.id === 'string' && source.id.trim().length > 0 ? source.id : createMapRecordId(),
+    name,
+    blocks,
+    blockCount: blocks.length,
+    createdAt,
+    updatedAt,
+  };
+}
+
+function loadSavedMapLibrary(): SavedMapRecord[] {
+  try {
+    const raw = globalThis.localStorage?.getItem(MAP_LIBRARY_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .map(normalizeSavedMapRecord)
+      .filter((record): record is SavedMapRecord => record !== null)
+      .sort((left, right) => right.updatedAt - left.updatedAt);
+  } catch {
+    return [];
+  }
+}
+
+function cloneMapBlocks(sourceBlocks: MapBlock[]) {
+  return sourceBlocks.map((block) => ({
+    ...block,
+    position: [...block.position] as [number, number, number],
+    rotation: [...block.rotation] as [number, number, number],
+    size: [...block.size] as [number, number, number],
+  }));
+}
+
+function playVictoryFanfare() {
+  const AudioContextClass = globalThis.AudioContext ?? (globalThis as typeof globalThis & {
+    webkitAudioContext?: typeof AudioContext;
+  }).webkitAudioContext;
+  if (!AudioContextClass) return;
+
+  const context = new AudioContextClass();
+  const notes = [523.25, 659.25, 783.99, 1046.5];
+  const now = context.currentTime;
+
+  notes.forEach((frequency, index) => {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.type = 'triangle';
+    oscillator.frequency.value = frequency;
+    gain.gain.setValueAtTime(0.0001, now + index * 0.14);
+    gain.gain.exponentialRampToValueAtTime(0.18, now + index * 0.14 + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + index * 0.14 + 0.28);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(now + index * 0.14);
+    oscillator.stop(now + index * 0.14 + 0.3);
+  });
+}
+
+function getAdjacentPlacement(
+  targetBlock: MapBlock,
+  nextSize: [number, number, number],
+  normal: [number, number, number],
+): [number, number, number] {
+  const [nx, ny, nz] = normal;
+  const absX = Math.abs(nx);
+  const absY = Math.abs(ny);
+  const absZ = Math.abs(nz);
+
+  if (absX >= absY && absX >= absZ) {
+    const direction = nx >= 0 ? 1 : -1;
+    return [
+      targetBlock.position[0] + direction * (targetBlock.size[0] * 0.5 + nextSize[0] * 0.5),
+      targetBlock.position[1],
+      targetBlock.position[2],
+    ];
+  }
+
+  if (absZ >= absX && absZ >= absY) {
+    const direction = nz >= 0 ? 1 : -1;
+    return [
+      targetBlock.position[0],
+      targetBlock.position[1],
+      targetBlock.position[2] + direction * (targetBlock.size[2] * 0.5 + nextSize[2] * 0.5),
+    ];
+  }
+
+  const direction = ny >= 0 ? 1 : -1;
+  return [
+    targetBlock.position[0],
+    targetBlock.position[1] + direction * (targetBlock.size[1] * 0.5 + nextSize[1] * 0.5),
+    targetBlock.position[2],
+  ];
+}
 
 function DynamicDepthOfField({ enabled, target, focalLength, bokehScale }: {
   enabled: boolean;
@@ -64,17 +242,29 @@ function App() {
   const lighting = useLightingControls();
   const postProcessing = usePostProcessingControls();
   const characterRef = useRef<CharacterControllerHandle>(null);
-  const lastSafeSpawnRef = useRef<[number, number, number] | null>(null);
+  const lastWonRunRef = useRef<number | null>(null);
   const [status, setStatus] = useState<GameStatus>('ready');
   const [editorMode, setEditorMode] = useState<EditorMode>('build');
   const [runVersion, setRunVersion] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [checkpointIndex, setCheckpointIndex] = useState<number | null>(null);
   const [checkpointToast, setCheckpointToast] = useState<string | null>(null);
-  const [renderMode, setRenderMode] = useState<RenderMode>('solid');
   const [transformMode, setTransformMode] = useState<TransformMode>('translate');
+  const [theme, setTheme] = useState<UiTheme>(() => {
+    const storedTheme = globalThis.localStorage?.getItem(THEME_STORAGE_KEY);
+    if (storedTheme === 'light' || storedTheme === 'dark') {
+      return storedTheme;
+    }
+
+    return globalThis.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  });
   const [selectedKind, setSelectedKind] = useState<MapBlockKind>('platform');
+  const [levaCollapsed, setLevaCollapsed] = useState(false);
   const [blocks, setBlocks] = useState<MapBlock[]>([]);
+  const [savedMaps, setSavedMaps] = useState<SavedMapRecord[]>(() => loadSavedMapLibrary());
+  const [activeSavedMapId, setActiveSavedMapId] = useState<string | null>(null);
+  const [, setActionStack] = useState<Array<{ type: 'add'; block: MapBlock }>>([]);
+  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [textureUrl, setTextureUrl] = useState<string | null>(null);
   const [textureName, setTextureName] = useState<string | null>(null);
   const [projection, setProjection] = useState({
@@ -96,9 +286,13 @@ function App() {
     setCheckpointToast(`${label} reached`);
   }, []);
 
-  const handleSafeSpawnChange = useCallback((position: [number, number, number]) => {
-    lastSafeSpawnRef.current = position;
-  }, []);
+  useEffect(() => {
+    globalThis.localStorage?.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+
+  useEffect(() => {
+    globalThis.localStorage?.setItem(MAP_LIBRARY_STORAGE_KEY, JSON.stringify(savedMaps));
+  }, [savedMaps]);
 
   const resetCharacter = useCallback((spawn: [number, number, number]) => {
     characterRef.current?.reset(new Vector3(spawn[0], spawn[1], spawn[2]));
@@ -133,9 +327,159 @@ function App() {
     return getBlockSpawn(candidate);
   }, [getBlockSpawn, getSpawnMarker]);
 
+  const getProgressRespawn = useCallback((sourceBlocks: MapBlock[], checkpoint: number | null): [number, number, number] => {
+    const checkpointBlocks = sourceBlocks.filter((block) => block.kind === 'checkpoint');
+    const checkpointBlock = checkpoint === null ? null : checkpointBlocks[checkpoint] ?? null;
+    if (checkpointBlock) {
+      return getBlockSpawn(checkpointBlock);
+    }
+
+    const spawnMarker = getSpawnMarker(sourceBlocks);
+    if (spawnMarker) {
+      return getBlockSpawn(spawnMarker);
+    }
+
+    return getPlaySpawn(sourceBlocks);
+  }, [getBlockSpawn, getPlaySpawn, getSpawnMarker]);
+
+  const handleSaveMapAsNew = useCallback((name: string) => {
+    const trimmedName = name.trim();
+    if (!trimmedName) {
+      setCheckpointToast('Enter a map name before saving.');
+      return;
+    }
+
+    const now = Date.now();
+    const nextRecord: SavedMapRecord = {
+      id: createMapRecordId(),
+      name: trimmedName,
+      blocks: cloneMapBlocks(blocks),
+      blockCount: blocks.length,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    setSavedMaps((prev) => [nextRecord, ...prev].sort((left, right) => right.updatedAt - left.updatedAt));
+    setActiveSavedMapId(nextRecord.id);
+    setCheckpointToast(`Saved map "${trimmedName}".`);
+  }, [blocks]);
+
+  const handleUpdateSavedMap = useCallback((id: string, nextName?: string) => {
+    const trimmedName = nextName?.trim();
+    let updatedName = '';
+    let hasUpdated = false;
+
+    setSavedMaps((prev) => prev
+      .map((record) => {
+        if (record.id !== id) {
+          return record;
+        }
+
+        hasUpdated = true;
+        updatedName = trimmedName && trimmedName.length > 0 ? trimmedName : record.name;
+        return {
+          ...record,
+          name: updatedName,
+          blocks: cloneMapBlocks(blocks),
+          blockCount: blocks.length,
+          updatedAt: Date.now(),
+        };
+      })
+      .sort((left, right) => right.updatedAt - left.updatedAt));
+
+    if (!hasUpdated) {
+      setCheckpointToast('Could not find a map to update.');
+      return;
+    }
+
+    setActiveSavedMapId(id);
+    setCheckpointToast(`Updated map "${updatedName}".`);
+  }, [blocks]);
+
+  const handleLoadSavedMap = useCallback((id: string) => {
+    const targetMap = savedMaps.find((record) => record.id === id);
+    if (!targetMap) {
+      setCheckpointToast('Could not find a map to load.');
+      return;
+    }
+
+    const nextBlocks = cloneMapBlocks(targetMap.blocks);
+    lastWonRunRef.current = null;
+    setBlocks(nextBlocks);
+    setSelectedBlockId(null);
+    setSelectedKind(nextBlocks[0]?.kind ?? 'platform');
+    setActionStack([]);
+    setCheckpointIndex(null);
+    setCheckpointToast(`Loaded map "${targetMap.name}".`);
+    setStatus('ready');
+    setEditorMode('build');
+    setRunVersion((version) => version + 1);
+    setElapsed(0);
+    setActiveSavedMapId(id);
+    resetCharacter([0, 2, 0]);
+  }, [resetCharacter, savedMaps]);
+
+  const handleRenameSavedMap = useCallback((id: string, nextName: string) => {
+    const trimmedName = nextName.trim();
+    if (!trimmedName) {
+      setCheckpointToast('Map name cannot be empty.');
+      return;
+    }
+
+    let hasRenamed = false;
+    setSavedMaps((prev) => prev
+      .map((record) => {
+        if (record.id !== id) {
+          return record;
+        }
+
+        hasRenamed = true;
+        return {
+          ...record,
+          name: trimmedName,
+          updatedAt: Date.now(),
+        };
+      })
+      .sort((left, right) => right.updatedAt - left.updatedAt));
+
+    if (!hasRenamed) {
+      setCheckpointToast('Could not find a map to rename.');
+      return;
+    }
+
+    setCheckpointToast(`Renamed map to "${trimmedName}".`);
+  }, []);
+
+  const handleDeleteSavedMap = useCallback((id: string) => {
+    let removedMapName = '';
+    let hasRemoved = false;
+
+    setSavedMaps((prev) => prev.filter((record) => {
+      if (record.id === id) {
+        removedMapName = record.name;
+        hasRemoved = true;
+        return false;
+      }
+      return true;
+    }));
+
+    if (!hasRemoved) {
+      setCheckpointToast('Could not find a map to delete.');
+      return;
+    }
+
+    if (activeSavedMapId === id) {
+      setActiveSavedMapId(null);
+    }
+    setCheckpointToast(`Deleted map "${removedMapName}".`);
+  }, [activeSavedMapId]);
+
   const resetMap = useCallback(() => {
     setBlocks([]);
-    lastSafeSpawnRef.current = null;
+    setSelectedBlockId(null);
+    setActionStack([]);
+    lastWonRunRef.current = null;
+    setActiveSavedMapId(null);
     setCheckpointIndex(null);
     setCheckpointToast(null);
     setStatus('ready');
@@ -147,7 +491,7 @@ function App() {
 
   const handlePlay = useCallback(() => {
     const spawn = getPlaySpawn(blocks);
-    lastSafeSpawnRef.current = spawn;
+    lastWonRunRef.current = null;
     setEditorMode('play');
     setStatus('playing');
     setRunVersion((version) => version + 1);
@@ -158,7 +502,7 @@ function App() {
   }, [blocks, getPlaySpawn, resetCharacter]);
 
   const handleBuildMode = useCallback(() => {
-    lastSafeSpawnRef.current = null;
+    lastWonRunRef.current = null;
     setEditorMode('build');
     setStatus('ready');
     setRunVersion((version) => version + 1);
@@ -168,19 +512,66 @@ function App() {
     resetCharacter([0, 2, 0]);
   }, [resetCharacter]);
 
-  const handlePlaceBlock = useCallback((point: { x: number; y: number; z: number }) => {
+  const handlePlaceBlock = useCallback((payload: {
+    point: { x: number; y: number; z: number };
+    source: 'ground' | 'block';
+    blockId?: string;
+    normal?: [number, number, number];
+  }) => {
     if (editorMode !== 'build') return;
+    const { point, source, blockId, normal } = payload;
     const catalogItem = getCatalogItem(selectedKind);
-    const position = selectedKind === 'spawn'
-      ? alignToSurface(point, catalogItem.size)
-      : snapPlacement(point, catalogItem.size);
+    let position: [number, number, number];
+
+    if (source === 'block' && blockId) {
+      const targetBlock = blocks.find((block) => block.id === blockId);
+      if (targetBlock) {
+        position = getAdjacentPlacement(targetBlock, catalogItem.size, normal ?? [0, 1, 0]);
+      } else {
+        position = alignToSurface(point, catalogItem.size);
+      }
+    } else {
+      position = selectedKind === 'spawn'
+        ? alignToSurface(point, catalogItem.size)
+        : snapPlacement(point, catalogItem.size);
+    }
+
     const nextBlock = createMapBlock(selectedKind, position);
     setBlocks((currentBlocks) => (
       selectedKind === 'spawn'
         ? [...currentBlocks.filter((block) => block.kind !== 'spawn'), nextBlock]
         : [...currentBlocks, nextBlock]
     ));
-  }, [editorMode, selectedKind]);
+    setSelectedBlockId(nextBlock.id);
+    setActionStack((s) => [...s, { type: 'add', block: nextBlock }]);
+  }, [blocks, editorMode, selectedKind]);
+
+  const handleUndo = useCallback(() => {
+    setActionStack((stack) => {
+      const next = [...stack];
+      const last = next.pop();
+      if (!last) return stack;
+      if (last.type === 'add') {
+        setBlocks((prev) => prev.filter((b) => b.id !== last.block.id));
+        setSelectedBlockId((sel) => (sel === last.block.id ? null : sel));
+      }
+      return next;
+    });
+  }, []);
+
+  const updateBlock = useCallback((id: string, updater: (b: MapBlock) => MapBlock) => {
+    setBlocks((prev) => prev.map((b) => (b.id === id ? updater(b) : b)));
+  }, []);
+
+  const handleSelectedBlockRenderModeChange = useCallback((mode: RenderMode) => {
+    if (!selectedBlockId) return;
+    updateBlock(selectedBlockId, (block) => ({ ...block, renderMode: mode }));
+  }, [selectedBlockId, updateBlock]);
+
+  const handleDeleteBlock = useCallback((id: string) => {
+    setBlocks((prev) => prev.filter((b) => b.id !== id));
+    setSelectedBlockId((sel) => (sel === id ? null : sel));
+  }, []);
 
   useEffect(() => {
     if (!checkpointToast) return;
@@ -189,10 +580,18 @@ function App() {
   }, [checkpointToast]);
 
   useEffect(() => {
-    if (status === 'won' || status === 'lost') {
+    if (status === 'won') {
       characterRef.current?.setVelocity({ x: 0, y: 0, z: 0 });
     }
   }, [status]);
+
+  useEffect(() => {
+    if (status !== 'won') return;
+    if (lastWonRunRef.current === runVersion) return;
+    lastWonRunRef.current = runVersion;
+    playVictoryFanfare();
+    setCheckpointToast('Congratulations! You completed the parkour map!');
+  }, [runVersion, status]);
 
   useEffect(() => {
     return () => {
@@ -202,6 +601,18 @@ function App() {
     };
   }, [textureUrl]);
 
+  const handleRespawn = useCallback((reason: 'fall' | 'hazard') => {
+    if (editorMode !== 'play') return;
+    const respawn = getProgressRespawn(blocks, checkpointIndex);
+    setStatus('playing');
+    resetCharacter(respawn);
+    setCheckpointToast(
+      reason === 'hazard'
+        ? 'Hazard hit - respawned at safe point.'
+        : 'Fell down - respawned at safe point.',
+    );
+  }, [blocks, checkpointIndex, editorMode, getProgressRespawn, resetCharacter]);
+
   const handleRestart = useCallback(() => {
     setStatus(editorMode === 'play' ? 'playing' : 'ready');
     setRunVersion((version) => version + 1);
@@ -210,26 +621,11 @@ function App() {
     if (editorMode !== 'play') {
       setCheckpointIndex(null);
     }
-    const spawnMarker = getSpawnMarker(blocks);
-    if (editorMode === 'play' && spawnMarker) {
-      const markerSpawn = getBlockSpawn(spawnMarker);
-      lastSafeSpawnRef.current = markerSpawn;
-      resetCharacter(markerSpawn);
-      return;
-    }
-
-    const checkpointBlocks = blocks.filter((block) => block.kind === 'checkpoint');
-    const checkpointBlock = checkpointIndex === null ? null : checkpointBlocks[checkpointIndex] ?? null;
-    if (editorMode === 'play' && checkpointBlock) {
-      const checkpointSpawn = getBlockSpawn(checkpointBlock);
-      lastSafeSpawnRef.current = checkpointSpawn;
-      resetCharacter(checkpointSpawn);
-      return;
-    }
-
-    const spawn = lastSafeSpawnRef.current ?? getPlaySpawn(blocks);
+    const spawn = editorMode === 'play'
+      ? getProgressRespawn(blocks, checkpointIndex)
+      : getPlaySpawn(blocks);
     resetCharacter(spawn);
-  }, [blocks, checkpointIndex, editorMode, getBlockSpawn, getPlaySpawn, getSpawnMarker, resetCharacter]);
+  }, [blocks, checkpointIndex, editorMode, getPlaySpawn, getProgressRespawn, resetCharacter]);
 
   const nudgeTransform = useCallback((axis: 'x' | 'y' | 'z', direction: 1 | -1) => {
     setShowTransformPreview(true);
@@ -304,6 +700,43 @@ function App() {
         event.preventDefault();
       }
 
+      // Undo (Ctrl+Z / Cmd+Z)
+      if ((event.ctrlKey || event.metaKey) && (event.key === 'z' || event.key === 'Z')) {
+        event.preventDefault();
+        handleUndo();
+        return;
+      }
+
+      // Delete selected block when in build mode
+      if (event.code === 'Delete' && editorMode === 'build' && selectedBlockId) {
+        event.preventDefault();
+        handleDeleteBlock(selectedBlockId);
+        return;
+      }
+
+      // Move selected block with arrow keys while in build mode
+      if (editorMode === 'build' && selectedBlockId && event.code.startsWith('Arrow')) {
+        event.preventDefault();
+        const step = 0.2;
+        switch (event.code) {
+          case 'ArrowLeft':
+            updateBlock(selectedBlockId, (b) => ({ ...b, position: [b.position[0] - step, b.position[1], b.position[2]] }));
+            break;
+          case 'ArrowRight':
+            updateBlock(selectedBlockId, (b) => ({ ...b, position: [b.position[0] + step, b.position[1], b.position[2]] }));
+            break;
+          case 'ArrowUp':
+            updateBlock(selectedBlockId, (b) => ({ ...b, position: [b.position[0], b.position[1], b.position[2] - step] }));
+            break;
+          case 'ArrowDown':
+            updateBlock(selectedBlockId, (b) => ({ ...b, position: [b.position[0], b.position[1], b.position[2] + step] }));
+            break;
+          default:
+            break;
+        }
+        return;
+      }
+
       switch (event.code) {
         case 'KeyI':
           nudgeTransform('z', -1);
@@ -333,7 +766,7 @@ function App() {
 
     globalThis.addEventListener('keydown', handleKeyDown, { passive: false });
     return () => globalThis.removeEventListener('keydown', handleKeyDown);
-  }, [handleRestart, nudgeTransform]);
+  }, [editorMode, handleDeleteBlock, handleRestart, handleUndo, nudgeTransform, selectedBlockId, updateBlock]);
 
   const checkpointBlocks = blocks.filter((block) => block.kind === 'checkpoint');
   const checkpointLabel = checkpointIndex === null
@@ -347,15 +780,46 @@ function App() {
   }
   const displayMessage = checkpointToast ?? statusMessage;
 
+  const selectedBlock = selectedBlockId ? blocks.find((b) => b.id === selectedBlockId) ?? null : null;
+  const activeRenderMode = selectedBlock?.renderMode ?? 'solid';
+  const savedMapSummaries: SavedMapSummary[] = savedMaps.map((record) => ({
+    id: record.id,
+    name: record.name,
+    blockCount: record.blockCount,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  }));
+
+  const isLight = theme === 'light';
+  const sceneBackground = isLight ? '#E6EDF8' : '#0B1020';
+  const ambientIntensity = isLight
+    ? Math.max(lighting.ambientIntensity, 0.75)
+    : lighting.ambientIntensity;
+  const directionalIntensity = isLight
+    ? Math.max(lighting.directionalIntensity, 1.55)
+    : lighting.directionalIntensity;
+
   return (
-    <div className="w-full h-screen">
-      <Leva collapsed />
+    <div className={`w-full h-screen ${isLight ? 'bg-slate-100 text-slate-900' : 'bg-slate-950 text-white'}`}>
+      <Leva collapsed={{ collapsed: levaCollapsed, onChange: setLevaCollapsed }} />
       <MobileControlsProvider>
         <MobileControls visible={editorMode === 'play'} />
         <MapEditorSidebar
           mode={editorMode}
+          theme={theme}
+          onThemeChange={setTheme}
           selectedKind={selectedKind}
           blockCount={blocks.length}
+          savedMaps={savedMapSummaries}
+          activeSavedMapId={activeSavedMapId}
+          selectedBlock={selectedBlock}
+          onUpdateBlock={(block) => updateBlock(block.id, () => block)}
+          onDeleteBlock={(id) => handleDeleteBlock(id)}
+          onSaveMap={handleSaveMapAsNew}
+          onUpdateSavedMap={handleUpdateSavedMap}
+          onLoadSavedMap={handleLoadSavedMap}
+          onRenameSavedMap={handleRenameSavedMap}
+          onDeleteSavedMap={handleDeleteSavedMap}
           onModeChange={(mode) => {
             if (mode === 'build') {
               handleBuildMode();
@@ -373,18 +837,21 @@ function App() {
           elapsed={elapsed}
           checkpointLabel={checkpointLabel}
           message={displayMessage}
-          renderMode={renderMode}
+          theme={theme}
+          selectedBlock={selectedBlock}
+          renderMode={activeRenderMode}
           transformMode={transformMode}
           textureName={textureName}
           projection={projection}
           onStart={handlePlay}
           onRestart={handleRestart}
-          onRenderModeChange={setRenderMode}
+          onRenderModeChange={handleSelectedBlockRenderModeChange}
           onTransformModeChange={setTransformMode}
           onTransformNudge={nudgeTransform}
           onResetTransform={handleResetTransform}
           onTextureSelect={handleTextureSelect}
           onProjectionChange={handleProjectionChange}
+          levaCollapsed={levaCollapsed}
         />
         <KeyboardControls
           map={[
@@ -397,12 +864,12 @@ function App() {
           ]}
         >
           <Canvas shadows>
-          <color attach="background" args={['#0B1020']} />
-          <ambientLight intensity={lighting.ambientIntensity} />
+          <color attach="background" args={[sceneBackground]} />
+          <ambientLight intensity={ambientIntensity} />
           <directionalLight
             castShadow
             position={[lighting.directionalDistance, lighting.directionalHeight, lighting.directionalDistance / 2]}
-            intensity={lighting.directionalIntensity}
+            intensity={directionalIntensity}
             shadow-mapSize={[4096, 4096]}
             shadow-camera-left={-30}
             shadow-camera-right={30}
@@ -420,12 +887,15 @@ function App() {
             <CharacterController ref={characterRef} spawn={[0, 2, 0]} enabled={editorMode === 'play'} />
             <MapScene
               blocks={blocks}
-              renderMode={renderMode}
+              theme={theme}
+              renderMode={activeRenderMode}
               textureUrl={textureUrl}
               transformState={transformState}
               showTransformPreview={showTransformPreview}
               isBuildMode={editorMode === 'build'}
               onPlaceBlock={handlePlaceBlock}
+              selectedBlockId={selectedBlockId}
+              onSelectBlock={setSelectedBlockId}
             />
             <GameManager
               characterRef={characterRef}
@@ -437,7 +907,7 @@ function App() {
               checkpointIndex={checkpointIndex}
               setCheckpointIndex={setCheckpointIndex}
               onCheckpoint={handleCheckpoint}
-              onSafeSpawnChange={handleSafeSpawnChange}
+              onRespawn={handleRespawn}
               blocks={blocks}
             />
           </Physics>

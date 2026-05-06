@@ -16,7 +16,7 @@ type GameManagerProps = {
   checkpointIndex: number | null;
   setCheckpointIndex: (index: number | null) => void;
   onCheckpoint: (label: string) => void;
-  onSafeSpawnChange: (position: [number, number, number]) => void;
+  onRespawn: (reason: 'fall' | 'hazard') => void;
   blocks: MapBlock[];
 };
 
@@ -38,20 +38,20 @@ export function GameManager({
   checkpointIndex,
   setCheckpointIndex,
   onCheckpoint,
-  onSafeSpawnChange,
+  onRespawn,
   blocks,
 }: GameManagerProps) {
   const [, getKeys] = useKeyboardControls();
   const { movement, isJumping } = useMobileControls();
   const elapsedRef = useRef(0);
   const lastUiUpdateRef = useRef(0);
-  const lastSafeUpdateRef = useRef(0);
+  const respawnCooldownRef = useRef(0);
 
   useEffect(() => {
     if (status === 'ready' || status === 'playing') {
       elapsedRef.current = 0;
       lastUiUpdateRef.current = 0;
-      lastSafeUpdateRef.current = 0;
+      respawnCooldownRef.current = 0;
       setElapsed(0);
     }
   }, [runVersion, status, setElapsed]);
@@ -88,29 +88,27 @@ export function GameManager({
       setElapsed(elapsedRef.current);
     }
 
+    if (elapsedRef.current < respawnCooldownRef.current) {
+      return;
+    }
+
     if (position.y < -10) {
-      setStatus('lost');
+      respawnCooldownRef.current = elapsedRef.current + 0.35;
+      onRespawn('fall');
       return;
     }
 
     const hazardBlocks = blocks.filter((block) => block.kind === 'hazard');
-    const isInHazard = hazardBlocks.some((block) => isInsideBox(position, block));
-    if (!isInHazard && characterRef.current?.getIsGrounded() && elapsedRef.current - lastSafeUpdateRef.current > 0.25) {
-      lastSafeUpdateRef.current = elapsedRef.current;
-      onSafeSpawnChange([position.x, position.y + 0.2, position.z]);
+    if (hazardBlocks.some((block) => isInsideBox(position, block))) {
+      respawnCooldownRef.current = elapsedRef.current + 0.35;
+      onRespawn('hazard');
+      return;
     }
 
     const finishBlocks = blocks.filter((block) => block.kind === 'finish');
     if (finishBlocks.some((block) => isInsideBox(position, block))) {
       setStatus('won');
       return;
-    }
-
-    for (const hazard of hazardBlocks) {
-      if (isInsideBox(position, hazard)) {
-        setStatus('lost');
-        return;
-      }
     }
 
     const checkpointBlocks = blocks.filter((block) => block.kind === 'checkpoint');
