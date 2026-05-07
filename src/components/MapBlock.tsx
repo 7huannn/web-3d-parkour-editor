@@ -248,6 +248,7 @@ export function MapBlock({ block, textureUrl, isBuildMode = false, onPlaceBlock,
       <group onClick={handleSurfaceClick} onContextMenu={handleContext}>
         <Building
           position={position}
+          rotation={block.rotation}
           modelUrl={modelBlockConfig.modelUrl}
           scale={modelBlockConfig.scale}
           baseOffsetY={modelBlockConfig.baseOffsetY}

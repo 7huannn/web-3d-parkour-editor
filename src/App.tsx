@@ -36,6 +36,17 @@ const THEME_STORAGE_KEY = 'map-builder-theme';
 const MAP_LIBRARY_STORAGE_KEY = 'map-builder-saved-maps-v1';
 const VALID_RENDER_MODES = new Set<RenderMode>(['solid', 'lines', 'points']);
 const VALID_BLOCK_KINDS = new Set<MapBlockKind>(MAP_BLOCK_CATALOG.map((item) => item.kind));
+const AFFINE_EDITABLE_KINDS = new Set<MapBlockKind>([
+  'platform',
+  'ramp',
+  'box',
+  'sphere',
+  'cone',
+  'cylinder',
+  'wheel',
+  'teapot',
+  'building',
+]);
 
 function createMapRecordId() {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -175,8 +186,8 @@ function playVictoryFanfare() {
   });
 }
 
-function getAdjacentPlacement(
-  targetBlock: MapBlock,
+function getAdjacentPlacementFromSurface(
+  point: { x: number; y: number; z: number },
   nextSize: [number, number, number],
   normal: [number, number, number],
 ): [number, number, number] {
@@ -184,30 +195,32 @@ function getAdjacentPlacement(
   const absX = Math.abs(nx);
   const absY = Math.abs(ny);
   const absZ = Math.abs(nz);
+  const snap2 = (value: number) => Math.round(value / 2) * 2;
+  const snap05 = (value: number) => Math.round(value / 0.5) * 0.5;
 
   if (absX >= absY && absX >= absZ) {
     const direction = nx >= 0 ? 1 : -1;
     return [
-      targetBlock.position[0] + direction * (targetBlock.size[0] * 0.5 + nextSize[0] * 0.5),
-      targetBlock.position[1],
-      targetBlock.position[2],
+      point.x + direction * nextSize[0] * 0.5,
+      snap05(point.y),
+      snap2(point.z),
     ];
   }
 
   if (absZ >= absX && absZ >= absY) {
     const direction = nz >= 0 ? 1 : -1;
     return [
-      targetBlock.position[0],
-      targetBlock.position[1],
-      targetBlock.position[2] + direction * (targetBlock.size[2] * 0.5 + nextSize[2] * 0.5),
+      snap2(point.x),
+      snap05(point.y),
+      point.z + direction * nextSize[2] * 0.5,
     ];
   }
 
   const direction = ny >= 0 ? 1 : -1;
   return [
-    targetBlock.position[0],
-    targetBlock.position[1] + direction * (targetBlock.size[1] * 0.5 + nextSize[1] * 0.5),
-    targetBlock.position[2],
+    snap2(point.x),
+    point.y + direction * nextSize[1] * 0.5,
+    snap2(point.z),
   ];
 }
 
@@ -526,7 +539,7 @@ function App() {
     if (source === 'block' && blockId) {
       const targetBlock = blocks.find((block) => block.id === blockId);
       if (targetBlock) {
-        position = getAdjacentPlacement(targetBlock, catalogItem.size, normal ?? [0, 1, 0]);
+        position = getAdjacentPlacementFromSurface(point, catalogItem.size, normal ?? [0, 1, 0]);
       } else {
         position = alignToSurface(point, catalogItem.size);
       }
@@ -628,6 +641,35 @@ function App() {
   }, [blocks, checkpointIndex, editorMode, getPlaySpawn, getProgressRespawn, resetCharacter]);
 
   const nudgeTransform = useCallback((axis: 'x' | 'y' | 'z', direction: 1 | -1) => {
+    if (editorMode === 'build' && selectedBlockId) {
+      const selected = blocks.find((block) => block.id === selectedBlockId);
+      if (selected && AFFINE_EDITABLE_KINDS.has(selected.kind)) {
+        updateBlock(selectedBlockId, (block) => {
+          const position = [...block.position] as [number, number, number];
+          const rotation = [...block.rotation] as [number, number, number];
+          const size = [...block.size] as [number, number, number];
+          const axisIndexMap = { x: 0, y: 1, z: 2 } as const;
+          const index = axisIndexMap[axis];
+
+          if (transformMode === 'translate') {
+            position[index] += 0.2 * direction;
+          } else if (transformMode === 'rotate') {
+            rotation[index] += (Math.PI / 12) * direction;
+          } else {
+            size[index] = Math.max(0.2, size[index] + 0.2 * direction);
+          }
+
+          return {
+            ...block,
+            position,
+            rotation,
+            size,
+          };
+        });
+        return;
+      }
+    }
+
     setShowTransformPreview(true);
     setTransformState((prev) => {
       const position = [...prev.position] as [number, number, number];
@@ -653,12 +695,25 @@ function App() {
 
       return { position, rotation, scale };
     });
-  }, [transformMode]);
+  }, [blocks, editorMode, selectedBlockId, transformMode, updateBlock]);
 
   const handleResetTransform = useCallback(() => {
+    if (editorMode === 'build' && selectedBlockId) {
+      const selected = blocks.find((block) => block.id === selectedBlockId);
+      if (selected && AFFINE_EDITABLE_KINDS.has(selected.kind)) {
+        const catalogItem = getCatalogItem(selected.kind);
+        updateBlock(selectedBlockId, (block) => ({
+          ...block,
+          rotation: catalogItem.rotation ?? [0, 0, 0],
+          size: [...catalogItem.size] as [number, number, number],
+        }));
+        return;
+      }
+    }
+
     setShowTransformPreview(false);
     setTransformState(defaultTransform.current);
-  }, []);
+  }, [blocks, editorMode, selectedBlockId, updateBlock]);
 
   const handleTextureSelect = useCallback((file: File | null) => {
     if (!file) {
