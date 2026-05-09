@@ -1,5 +1,5 @@
 import React, { useImperativeHandle, useRef, useState } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { Vector3, MathUtils } from 'three';
 import { CapsuleCollider, RigidBody, RigidBodyApi, useRapier } from '@react-three/rapier';
 import { useKeyboardControls } from '@react-three/drei';
@@ -35,10 +35,15 @@ export const CharacterController = React.forwardRef<CharacterControllerHandle, C
   const { rapier, world } = useRapier();
   const { isJumping: isMobileJumping, movement: mobileMovement } = useMobileControls();
   const [, getKeys] = useKeyboardControls();
+  const { camera } = useThree();
   const [isSprinting, setIsSprinting] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
   const targetRotation = useRef(0);
   const currentRotation = useRef(0);
+  const cameraForward = useRef(new Vector3());
+  const cameraRight = useRef(new Vector3());
+  const movementDirection = useRef(new Vector3());
+  const worldUp = useRef(new Vector3(0, 1, 0));
   const [state, setState] = useState<CharacterState>({
     moveSpeed: 0,
     jumpForce: 0,
@@ -148,9 +153,27 @@ export const CharacterController = React.forwardRef<CharacterControllerHandle, C
     if (movement) {
       const sprintMultiplier = movement.sprint ? controls.sprintMultiplier : 1;
       const moveForce = controls.moveSpeed * (isGrounded ? 1 : controls.airControl);
+      camera.getWorldDirection(cameraForward.current);
+      cameraForward.current.y = 0;
+      if (cameraForward.current.lengthSq() < 1e-6) {
+        cameraForward.current.set(0, 0, -1);
+      } else {
+        cameraForward.current.normalize();
+      }
+
+      cameraRight.current.crossVectors(cameraForward.current, worldUp.current).normalize();
+      movementDirection.current
+        .set(0, 0, 0)
+        .addScaledVector(cameraForward.current, -movement.normalizedZ)
+        .addScaledVector(cameraRight.current, movement.normalizedX);
+
+      if (movementDirection.current.lengthSq() > 1e-6) {
+        movementDirection.current.normalize();
+      }
+
       const velocity = createMovementVelocity(
-        movement.normalizedX,
-        movement.normalizedZ,
+        movementDirection.current.x,
+        movementDirection.current.z,
         moveForce * sprintMultiplier,
         linvel.y
       );

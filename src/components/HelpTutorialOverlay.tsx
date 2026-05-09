@@ -20,11 +20,13 @@ type TutorialSection = {
 const TUTORIAL_SECTIONS: ReadonlyArray<TutorialSection> = [
   {
     title: 'Basic Controls',
-    summary: 'Core movement and retry controls while playing.',
+    summary: 'Core movement, camera, and retry controls while playing.',
     rows: [
       { label: 'Move', detail: 'WASD / Arrow Keys' },
       { label: 'Jump', detail: 'Space' },
       { label: 'Sprint', detail: 'Shift' },
+      { label: 'Look around', detail: 'Drag mouse to orbit camera' },
+      { label: 'Zoom', detail: 'Mouse wheel / touch pinch' },
       { label: 'Restart', detail: 'R' },
     ],
   },
