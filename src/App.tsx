@@ -297,6 +297,7 @@ function App() {
   });
   const [showTransformPreview, setShowTransformPreview] = useState(false);
   const [isBlockDragActive, setIsBlockDragActive] = useState(false);
+  const [isPointerLocked, setIsPointerLocked] = useState(false);
   const defaultTransform = useRef<TransformState>({
     position: [12, 1.4, -8],
     rotation: [0, 0, 0],
@@ -323,12 +324,52 @@ function App() {
     globalThis.localStorage?.setItem(MAP_LIBRARY_STORAGE_KEY, JSON.stringify(savedMaps));
   }, [savedMaps]);
 
+  const requestPlayPointerLock = useCallback(() => {
+    if (typeof document === 'undefined') return;
+    const canvas = document.querySelector('canvas') as (HTMLCanvasElement & {
+      requestPointerLock?: () => Promise<void> | void;
+    }) | null;
+    if (!canvas || !canvas.requestPointerLock) return;
+    if (document.pointerLockElement === canvas) return;
+    void canvas.requestPointerLock();
+  }, []);
+
+  const releasePointerLock = useCallback(() => {
+    if (typeof document === 'undefined') return;
+    if (!document.pointerLockElement) return;
+    document.exitPointerLock?.();
+  }, []);
+
   useEffect(() => {
     if (editorMode !== 'build') {
       blockDragRef.current = null;
       setIsBlockDragActive(false);
     }
   }, [editorMode]);
+
+  useEffect(() => {
+    const handlePointerLockChange = () => {
+      const canvas = document.querySelector('canvas');
+      setIsPointerLocked(document.pointerLockElement === canvas);
+    };
+
+    document.addEventListener('pointerlockchange', handlePointerLockChange);
+    return () => document.removeEventListener('pointerlockchange', handlePointerLockChange);
+  }, []);
+
+  useEffect(() => {
+    if (editorMode !== 'play') {
+      setIsPointerLocked(false);
+      releasePointerLock();
+      return;
+    }
+
+    const canvas = document.querySelector('canvas');
+    if (!canvas) return;
+    const handleMouseDown = () => requestPlayPointerLock();
+    canvas.addEventListener('mousedown', handleMouseDown);
+    return () => canvas.removeEventListener('mousedown', handleMouseDown);
+  }, [editorMode, releasePointerLock, requestPlayPointerLock]);
 
   useEffect(() => {
     const handlePointerRelease = () => {
@@ -550,7 +591,8 @@ function App() {
     setCheckpointToast(null);
     setCheckpointIndex(null);
     resetCharacter(spawn);
-  }, [blocks, getPlaySpawn, resetCharacter]);
+    requestPlayPointerLock();
+  }, [blocks, getPlaySpawn, requestPlayPointerLock, resetCharacter]);
 
   const handleBuildMode = useCallback(() => {
     lastWonRunRef.current = null;
@@ -561,7 +603,8 @@ function App() {
     setCheckpointToast(null);
     setCheckpointIndex(null);
     resetCharacter([0, 2, 0]);
-  }, [resetCharacter]);
+    releasePointerLock();
+  }, [releasePointerLock, resetCharacter]);
 
   const handlePlaceBlock = useCallback((payload: {
     point: { x: number; y: number; z: number };
@@ -1004,6 +1047,7 @@ function App() {
           onTextureSelect={handleTextureSelect}
           onProjectionChange={handleProjectionChange}
           levaCollapsed={levaCollapsed}
+          pointerLockActive={isPointerLocked}
         />
         <KeyboardControls
           map={[

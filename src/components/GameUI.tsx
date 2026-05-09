@@ -30,6 +30,7 @@ type GameUIProps = {
   readonly onTextureSelect: (file: File | null) => void;
   readonly onProjectionChange: (field: 'near' | 'far' | 'offsetX' | 'height' | 'distance', value: number) => void;
   readonly levaCollapsed: boolean;
+  readonly pointerLockActive?: boolean;
 };
 
 function formatTime(elapsed: number) {
@@ -73,6 +74,7 @@ export function GameUI({
   onTextureSelect,
   onProjectionChange,
   levaCollapsed,
+  pointerLockActive = false,
 }: GameUIProps) {
   const [helpOpen, setHelpOpen] = useState(false);
   const [taskbarTop, setTaskbarTop] = useState(58);
@@ -193,6 +195,13 @@ export function GameUI({
         {message && (
           <div className={`mt-2 rounded-xl border px-3 py-1.5 text-xs text-center backdrop-blur-sm ${isLight ? 'border-slate-300/80 bg-white/80 text-emerald-700' : 'border-white/15 bg-slate-950/45 text-emerald-200'}`}>
             {message}
+          </div>
+        )}
+        {status === 'playing' && (
+          <div className={`mt-2 rounded-xl border px-3 py-1.5 text-xs text-center backdrop-blur-sm ${isLight ? 'border-slate-300/80 bg-white/80 text-slate-700' : 'border-white/15 bg-slate-950/45 text-white/85'}`}>
+            {pointerLockActive
+              ? 'Mouse look active. Press Esc to release cursor.'
+              : 'Click inside the scene to lock cursor and enable mouse look.'}
           </div>
         )}
       </div>
