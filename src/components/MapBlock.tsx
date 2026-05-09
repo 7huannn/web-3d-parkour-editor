@@ -87,6 +87,19 @@ type MapBlockProps = {
   ) => void;
   readonly selected?: boolean;
   readonly onSelectBlock?: (id: string | null) => void;
+  readonly onDragStart?: (payload: {
+    blockId: string;
+    pointerId: number;
+    rayOrigin: [number, number, number];
+    rayDirection: [number, number, number];
+  }) => void;
+  readonly onDragMove?: (payload: {
+    blockId: string;
+    pointerId: number;
+    rayOrigin: [number, number, number];
+    rayDirection: [number, number, number];
+  }) => void;
+  readonly onDragEnd?: (payload: { blockId: string; pointerId: number }) => void;
 };
 
 function BuildInteractionBox({
@@ -94,11 +107,17 @@ function BuildInteractionBox({
   selected,
   onClick,
   onContextMenu,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
 }: Readonly<{
   size: [number, number, number];
   selected: boolean;
   onClick: (event: ThreeEvent<MouseEvent>) => void;
   onContextMenu: (event: ThreeEvent<MouseEvent>) => void;
+  onPointerDown: (event: ThreeEvent<PointerEvent>) => void;
+  onPointerMove: (event: ThreeEvent<PointerEvent>) => void;
+  onPointerUp: (event: ThreeEvent<PointerEvent>) => void;
 }>) {
   const paddedSize = useMemo<[number, number, number]>(
     () => [size[0] + 0.02, size[1] + 0.02, size[2] + 0.02],
@@ -109,7 +128,14 @@ function BuildInteractionBox({
 
   return (
     <>
-      <mesh geometry={geometry} onClick={onClick} onContextMenu={onContextMenu}>
+      <mesh
+        geometry={geometry}
+        onClick={onClick}
+        onContextMenu={onContextMenu}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+      >
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
       {selected && (
@@ -133,7 +159,17 @@ function getModelBlockConfig(block: MapBlock) {
   return null;
 }
 
-export function MapBlock({ block, textureUrl, isBuildMode = false, onPlaceBlock, selected = false, onSelectBlock }: MapBlockProps) {
+export function MapBlock({
+  block,
+  textureUrl,
+  isBuildMode = false,
+  onPlaceBlock,
+  selected = false,
+  onSelectBlock,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+}: MapBlockProps) {
   const texture = useTexture(textureUrl || '/final-texture.png');
 
   texture.wrapS = RepeatWrapping;
@@ -145,6 +181,8 @@ export function MapBlock({ block, textureUrl, isBuildMode = false, onPlaceBlock,
   const position = block.position;
   const handleSurfaceClick = (event: ThreeEvent<MouseEvent>) => {
     if (!isBuildMode) return;
+    const nativeEvent = event.nativeEvent as MouseEvent;
+    if (nativeEvent.button !== 0) return;
     event.stopPropagation();
     onSelectBlock?.(block.id);
     if (onPlaceBlock) {
@@ -170,6 +208,49 @@ export function MapBlock({ block, textureUrl, isBuildMode = false, onPlaceBlock,
     if (onSelectBlock) onSelectBlock(block.id);
   };
 
+  const handlePointerDown = (event: ThreeEvent<PointerEvent>) => {
+    if (!isBuildMode) return;
+    if (event.button !== 2) return;
+    event.stopPropagation();
+    const nativeEvent = event.nativeEvent as PointerEvent & { stopImmediatePropagation?: () => void };
+    nativeEvent.preventDefault();
+    nativeEvent.stopImmediatePropagation?.();
+    onSelectBlock?.(block.id);
+    onDragStart?.({
+      blockId: block.id,
+      pointerId: event.pointerId,
+      rayOrigin: [event.ray.origin.x, event.ray.origin.y, event.ray.origin.z],
+      rayDirection: [event.ray.direction.x, event.ray.direction.y, event.ray.direction.z],
+    });
+    const pointerTarget = event.target as { setPointerCapture?: (pointerId: number) => void };
+    pointerTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const handlePointerMove = (event: ThreeEvent<PointerEvent>) => {
+    if (!isBuildMode) return;
+    if ((event.buttons & 2) !== 2) return;
+    event.stopPropagation();
+    const nativeEvent = event.nativeEvent as PointerEvent & { stopImmediatePropagation?: () => void };
+    nativeEvent.stopImmediatePropagation?.();
+    onDragMove?.({
+      blockId: block.id,
+      pointerId: event.pointerId,
+      rayOrigin: [event.ray.origin.x, event.ray.origin.y, event.ray.origin.z],
+      rayDirection: [event.ray.direction.x, event.ray.direction.y, event.ray.direction.z],
+    });
+  };
+
+  const handlePointerUp = (event: ThreeEvent<PointerEvent>) => {
+    if (!isBuildMode) return;
+    if (event.button !== 2) return;
+    event.stopPropagation();
+    const nativeEvent = event.nativeEvent as PointerEvent & { stopImmediatePropagation?: () => void };
+    nativeEvent.stopImmediatePropagation?.();
+    onDragEnd?.({ blockId: block.id, pointerId: event.pointerId });
+    const pointerTarget = event.target as { releasePointerCapture?: (pointerId: number) => void };
+    pointerTarget.releasePointerCapture?.(event.pointerId);
+  };
+
   if (block.kind === 'spawn') {
     return (
       <group onClick={handleSurfaceClick} onContextMenu={handleContext}>
@@ -181,6 +262,9 @@ export function MapBlock({ block, textureUrl, isBuildMode = false, onPlaceBlock,
               selected={selected}
               onClick={handleSurfaceClick}
               onContextMenu={handleContext}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
             />
           </group>
         )}
@@ -199,6 +283,9 @@ export function MapBlock({ block, textureUrl, isBuildMode = false, onPlaceBlock,
               selected={selected}
               onClick={handleSurfaceClick}
               onContextMenu={handleContext}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
             />
           </group>
         )}
@@ -217,6 +304,9 @@ export function MapBlock({ block, textureUrl, isBuildMode = false, onPlaceBlock,
               selected={selected}
               onClick={handleSurfaceClick}
               onContextMenu={handleContext}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
             />
           </group>
         )}
@@ -235,6 +325,9 @@ export function MapBlock({ block, textureUrl, isBuildMode = false, onPlaceBlock,
               selected={selected}
               onClick={handleSurfaceClick}
               onContextMenu={handleContext}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
             />
           </group>
         )}
@@ -260,6 +353,9 @@ export function MapBlock({ block, textureUrl, isBuildMode = false, onPlaceBlock,
               selected={selected}
               onClick={handleSurfaceClick}
               onContextMenu={handleContext}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={handlePointerUp}
             />
           </group>
         )}
@@ -291,6 +387,9 @@ export function MapBlock({ block, textureUrl, isBuildMode = false, onPlaceBlock,
             selected={selected}
             onClick={handleSurfaceClick}
             onContextMenu={handleContext}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
           />
         </group>
       )}

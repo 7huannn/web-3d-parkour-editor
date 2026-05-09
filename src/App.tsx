@@ -47,6 +47,14 @@ const AFFINE_EDITABLE_KINDS = new Set<MapBlockKind>([
   'teapot',
   'building',
 ]);
+const DRAG_MOVE_STEP = 0.2;
+
+type BlockDragPayload = {
+  blockId: string;
+  pointerId: number;
+  rayOrigin: [number, number, number];
+  rayDirection: [number, number, number];
+};
 
 function createMapRecordId() {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -288,12 +296,20 @@ function App() {
     distance: 6,
   });
   const [showTransformPreview, setShowTransformPreview] = useState(false);
+  const [isBlockDragActive, setIsBlockDragActive] = useState(false);
   const defaultTransform = useRef<TransformState>({
     position: [12, 1.4, -8],
     rotation: [0, 0, 0],
     scale: [1, 1, 1],
   });
   const [transformState, setTransformState] = useState<TransformState>(defaultTransform.current);
+  const blockDragRef = useRef<{
+    blockId: string;
+    pointerId: number;
+    planeY: number;
+    anchor: [number, number, number];
+    origin: [number, number, number];
+  } | null>(null);
 
   const handleCheckpoint = useCallback((label: string) => {
     setCheckpointToast(`${label} reached`);
@@ -306,6 +322,28 @@ function App() {
   useEffect(() => {
     globalThis.localStorage?.setItem(MAP_LIBRARY_STORAGE_KEY, JSON.stringify(savedMaps));
   }, [savedMaps]);
+
+  useEffect(() => {
+    if (editorMode !== 'build') {
+      blockDragRef.current = null;
+      setIsBlockDragActive(false);
+    }
+  }, [editorMode]);
+
+  useEffect(() => {
+    const handlePointerRelease = () => {
+      if (!blockDragRef.current) return;
+      blockDragRef.current = null;
+      setIsBlockDragActive(false);
+    };
+
+    globalThis.addEventListener('pointerup', handlePointerRelease);
+    globalThis.addEventListener('pointercancel', handlePointerRelease);
+    return () => {
+      globalThis.removeEventListener('pointerup', handlePointerRelease);
+      globalThis.removeEventListener('pointercancel', handlePointerRelease);
+    };
+  }, []);
 
   const resetCharacter = useCallback((spawn: [number, number, number]) => {
     characterRef.current?.reset(new Vector3(spawn[0], spawn[1], spawn[2]));
@@ -576,12 +614,71 @@ function App() {
     setBlocks((prev) => prev.map((b) => (b.id === id ? updater(b) : b)));
   }, []);
 
+  const getRayGroundHit = useCallback((payload: BlockDragPayload, planeY: number): [number, number, number] | null => {
+    const [ox, oy, oz] = payload.rayOrigin;
+    const [dx, dy, dz] = payload.rayDirection;
+    if (Math.abs(dy) < 1e-6) return null;
+    const t = (planeY - oy) / dy;
+    if (!Number.isFinite(t) || t < 0) return null;
+    return [ox + dx * t, planeY, oz + dz * t];
+  }, []);
+
+  const handleBlockDragStart = useCallback((payload: BlockDragPayload) => {
+    if (editorMode !== 'build') return;
+    const block = blocks.find((candidate) => candidate.id === payload.blockId);
+    if (!block) return;
+    const anchor = getRayGroundHit(payload, block.position[1]);
+    if (!anchor) return;
+    blockDragRef.current = {
+      blockId: block.id,
+      pointerId: payload.pointerId,
+      planeY: block.position[1],
+      anchor,
+      origin: [...block.position] as [number, number, number],
+    };
+    setIsBlockDragActive(true);
+    setSelectedBlockId(block.id);
+  }, [blocks, editorMode, getRayGroundHit]);
+
+  const handleBlockDragMove = useCallback((payload: BlockDragPayload) => {
+    if (editorMode !== 'build') return;
+    const dragState = blockDragRef.current;
+    if (!dragState) return;
+    if (dragState.blockId !== payload.blockId || dragState.pointerId !== payload.pointerId) return;
+    const point = getRayGroundHit(payload, dragState.planeY);
+    if (!point) return;
+
+    const nextX = Math.round((dragState.origin[0] + (point[0] - dragState.anchor[0])) / DRAG_MOVE_STEP) * DRAG_MOVE_STEP;
+    const nextZ = Math.round((dragState.origin[2] + (point[2] - dragState.anchor[2])) / DRAG_MOVE_STEP) * DRAG_MOVE_STEP;
+    updateBlock(dragState.blockId, (block) => {
+      if (block.position[0] === nextX && block.position[2] === nextZ) {
+        return block;
+      }
+      return {
+        ...block,
+        position: [nextX, block.position[1], nextZ],
+      };
+    });
+  }, [editorMode, getRayGroundHit, updateBlock]);
+
+  const handleBlockDragEnd = useCallback((payload: { blockId: string; pointerId: number }) => {
+    const dragState = blockDragRef.current;
+    if (!dragState) return;
+    if (dragState.blockId !== payload.blockId || dragState.pointerId !== payload.pointerId) return;
+    blockDragRef.current = null;
+    setIsBlockDragActive(false);
+  }, []);
+
   const handleSelectedBlockRenderModeChange = useCallback((mode: RenderMode) => {
     if (!selectedBlockId) return;
     updateBlock(selectedBlockId, (block) => ({ ...block, renderMode: mode }));
   }, [selectedBlockId, updateBlock]);
 
   const handleDeleteBlock = useCallback((id: string) => {
+    if (blockDragRef.current?.blockId === id) {
+      blockDragRef.current = null;
+      setIsBlockDragActive(false);
+    }
     setBlocks((prev) => prev.filter((b) => b.id !== id));
     setSelectedBlockId((sel) => (sel === id ? null : sel));
   }, []);
@@ -772,7 +869,7 @@ function App() {
       // Move selected block with arrow keys while in build mode
       if (editorMode === 'build' && selectedBlockId && event.code.startsWith('Arrow')) {
         event.preventDefault();
-        const step = 0.2;
+        const step = DRAG_MOVE_STEP;
         switch (event.code) {
           case 'ArrowLeft':
             updateBlock(selectedBlockId, (b) => ({ ...b, position: [b.position[0] - step, b.position[1], b.position[2]] }));
@@ -951,6 +1048,9 @@ function App() {
               onPlaceBlock={handlePlaceBlock}
               selectedBlockId={selectedBlockId}
               onSelectBlock={setSelectedBlockId}
+              onDragStart={handleBlockDragStart}
+              onDragMove={handleBlockDragMove}
+              onDragEnd={handleBlockDragEnd}
             />
             <GameManager
               characterRef={characterRef}
@@ -967,7 +1067,7 @@ function App() {
             />
           </Physics>
           {editorMode === 'build' ? (
-            <BuildCamera projection={projection} />
+            <BuildCamera projection={projection} controlsEnabled={!isBlockDragActive} />
           ) : (
             <FollowCamera target={characterRef} projection={projection} />
           )}

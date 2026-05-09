@@ -130,7 +130,7 @@ export function MapEditorSidebar({
           <div className={`text-xs uppercase tracking-[0.28em] ${isLight ? 'text-sky-700' : 'text-sky-200/80'}`}>Map Builder</div>
           <div className="mt-1 text-2xl font-semibold">Design first, then play</div>
           <div className={`mt-2 text-sm ${isLight ? 'text-slate-600' : 'text-white/70'}`}>
-            Click in the scene to place the selected block on the build grid.
+            Left click to place blocks. Right click and drag a selected block to move it (camera orbit is paused while dragging).
           </div>
         </div>
 

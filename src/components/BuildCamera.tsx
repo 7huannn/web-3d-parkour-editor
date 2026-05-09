@@ -8,9 +8,10 @@ type BuildCameraProps = {
     height: number;
     distance: number;
   };
+  readonly controlsEnabled?: boolean;
 };
 
-export function BuildCamera({ projection }: BuildCameraProps) {
+export function BuildCamera({ projection, controlsEnabled = true }: BuildCameraProps) {
   return (
     <>
       <PerspectiveCamera
@@ -22,6 +23,7 @@ export function BuildCamera({ projection }: BuildCameraProps) {
       />
       <OrbitControls
         makeDefault
+        enabled={controlsEnabled}
         target={[0, 0, 0]}
         enablePan
         enableZoom

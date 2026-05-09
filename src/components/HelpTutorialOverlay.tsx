@@ -30,11 +30,12 @@ const TUTORIAL_SECTIONS: ReadonlyArray<TutorialSection> = [
   },
   {
     title: 'Building Tips',
-    summary: 'Fast editing actions in build mode.',
+    summary: 'Fast editing actions in build mode. Right-dragging a selected block temporarily pauses camera orbit.',
     rows: [
       { label: 'Select block', detail: 'Click a block' },
       { label: 'Place block', detail: 'Left click on a block surface' },
       { label: 'Move block', detail: 'Arrow keys' },
+      { label: 'Drag block', detail: 'Right click and drag the selected block' },
       { label: 'Delete block', detail: 'Delete key' },
     ],
   },

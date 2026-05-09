@@ -22,6 +22,19 @@ type MapSceneProps = {
   }) => void;
   readonly selectedBlockId?: string | null;
   readonly onSelectBlock?: (id: string | null) => void;
+  readonly onDragStart?: (payload: {
+    blockId: string;
+    pointerId: number;
+    rayOrigin: [number, number, number];
+    rayDirection: [number, number, number];
+  }) => void;
+  readonly onDragMove?: (payload: {
+    blockId: string;
+    pointerId: number;
+    rayOrigin: [number, number, number];
+    rayDirection: [number, number, number];
+  }) => void;
+  readonly onDragEnd?: (payload: { blockId: string; pointerId: number }) => void;
 };
 
 function TransformPreview({ renderMode, textureUrl, transformState }: Readonly<{
@@ -77,6 +90,9 @@ export function MapScene({
   onPlaceBlock,
   selectedBlockId,
   onSelectBlock,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
 }: MapSceneProps) {
   const isLight = theme === 'light';
 
@@ -140,6 +156,9 @@ export function MapScene({
           onPlaceBlock={onPlaceBlock}
           selected={selectedBlockId === block.id}
           onSelectBlock={onSelectBlock}
+          onDragStart={onDragStart}
+          onDragMove={onDragMove}
+          onDragEnd={onDragEnd}
         />
       ))}
     </group>
