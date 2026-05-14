@@ -11,15 +11,22 @@ const MIN_PITCH = -0.62;
 const MAX_PITCH = 0.72;
 const ORBIT_HEIGHT_OFFSET = 1.1;
 const MIN_CAMERA_DISTANCE = 2.5;
-const CAMERA_ROTATION_SMOOTH = 0.22;
-const CAMERA_POSITION_SMOOTH = 0.24;
 const LOOK_AHEAD_DISTANCE = 1.35;
+
+const TARGET_DAMP_SPEED = 12;
+const ROTATION_DAMP_SPEED = 14;
+const DISTANCE_DAMP_SPEED = 12;
+const CAMERA_POSITION_DAMP_SPEED = 16;
 
 function normalizeAngle(angle: number) {
   let next = angle;
   while (next > Math.PI) next -= Math.PI * 2;
   while (next < -Math.PI) next += Math.PI * 2;
   return next;
+}
+
+function dampFactor(delta: number, speed: number) {
+  return 1 - Math.exp(-speed * delta);
 }
 
 type FollowCameraProps = Readonly<{
@@ -36,6 +43,7 @@ type FollowCameraProps = Readonly<{
 export function FollowCamera({ target, projection }: FollowCameraProps) {
   const cameraRef = useRef<THREE.Group>(null);
   const controls = useCameraControls();
+  const targetPoint = useRef(new Vector3(0, ORBIT_HEIGHT_OFFSET, 0));
   const smoothedTarget = useRef(new Vector3(0, ORBIT_HEIGHT_OFFSET, 0));
   const focusPoint = useRef(new Vector3(0, ORBIT_HEIGHT_OFFSET, 0));
   const desiredCameraPos = useRef(new Vector3());
@@ -85,30 +93,33 @@ export function FollowCamera({ target, projection }: FollowCameraProps) {
     return () => globalThis.removeEventListener('wheel', handleWheel);
   }, [projection.distance]);
 
-  useFrame((state) => {
+  useFrame((state, delta) => {
     if (!target.current || !cameraRef.current) return;
 
     const position = target.current.getPosition();
     const targetHeight = ORBIT_HEIGHT_OFFSET + projection.height * 0.22;
-    const targetPoint = new Vector3(position.x, position.y + targetHeight, position.z);
+    targetPoint.current.set(position.x, position.y + targetHeight, position.z);
 
     if (!initialized.current) {
       initialized.current = true;
-      smoothedTarget.current.copy(targetPoint);
+      smoothedTarget.current.copy(targetPoint.current);
       desiredYaw.current = 0;
       currentYaw.current = 0;
       currentPitch.current = desiredPitch.current;
-    } else if (smoothedTarget.current.distanceTo(targetPoint) > 12) {
-      smoothedTarget.current.copy(targetPoint);
+    } else if (smoothedTarget.current.distanceTo(targetPoint.current) > 12) {
+      smoothedTarget.current.copy(targetPoint.current);
     } else {
-      smoothedTarget.current.lerp(targetPoint, controls.smoothness);
+      const targetDamp = dampFactor(delta, TARGET_DAMP_SPEED * controls.smoothness);
+      smoothedTarget.current.lerp(targetPoint.current, targetDamp);
     }
 
+    const rotationDamp = dampFactor(delta, ROTATION_DAMP_SPEED);
     const yawDiff = normalizeAngle(desiredYaw.current - currentYaw.current);
-    currentYaw.current = normalizeAngle(currentYaw.current + yawDiff * CAMERA_ROTATION_SMOOTH);
-    currentPitch.current += (desiredPitch.current - currentPitch.current) * CAMERA_ROTATION_SMOOTH;
+    currentYaw.current = normalizeAngle(currentYaw.current + yawDiff * rotationDamp);
+    currentPitch.current += (desiredPitch.current - currentPitch.current) * rotationDamp;
 
-    currentDistance.current += (targetDistance.current - currentDistance.current) * 0.2;
+    const distanceDamp = dampFactor(delta, DISTANCE_DAMP_SPEED);
+    currentDistance.current += (targetDistance.current - currentDistance.current) * distanceDamp;
 
     horizontalForward.current.set(
       Math.sin(currentYaw.current),
@@ -138,11 +149,16 @@ export function FollowCamera({ target, projection }: FollowCameraProps) {
       .copy(focusPoint.current)
       .addScaledVector(lookDirection.current, -currentDistance.current);
 
-    state.camera.position.lerp(desiredCameraPos.current, CAMERA_POSITION_SMOOTH);
-    state.camera.near = projection.near;
-    state.camera.far = projection.far;
-    state.camera.fov = controls.fov;
-    state.camera.updateProjectionMatrix();
+    const positionDamp = dampFactor(delta, CAMERA_POSITION_DAMP_SPEED);
+    state.camera.position.lerp(desiredCameraPos.current, positionDamp);
+
+    if (state.camera.near !== projection.near || state.camera.far !== projection.far || state.camera.fov !== controls.fov) {
+      state.camera.near = projection.near;
+      state.camera.far = projection.far;
+      state.camera.fov = controls.fov;
+      state.camera.updateProjectionMatrix();
+    }
+
     state.camera.lookAt(focusPoint.current);
   });
 

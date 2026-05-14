@@ -1075,8 +1075,9 @@ function App() {
             shadow-bias={-0.0001}
             shadow-normalBias={0.02}
           />
-          <Physics 
-            interpolate={false}
+          <Physics
+            interpolate
+            timeStep={1 / 60}
             positionIterations={5}
             velocityIterations={4}
           >

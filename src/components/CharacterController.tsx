@@ -8,13 +8,26 @@ import { calculateMovement, createJumpImpulse, createMovementVelocity } from '..
 import { useMobileControls } from '../contexts/useMobileControls';
 import { CharacterModel } from './CharacterModel';
 
-export type CharacterState = {
-  moveSpeed: number;
-  jumpForce: number;
-  airControl: number;
-  isGrounded: boolean;
-  velocity: { x: number; y: number; z: number };
-};
+const PLAYER_MASS = 10;
+const CAPSULE_HALF_HEIGHT = 0.8;
+const CAPSULE_RADIUS = 0.4;
+const CAPSULE_OFFSET_Y = -0.2;
+const MODEL_SCALE = 1.5;
+const MODEL_BASE_Y = CAPSULE_OFFSET_Y - (CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS);
+
+const GROUND_PROBE_START = 0.08;
+const GROUND_PROBE_MAX = 0.22;
+const FOOT_SAMPLE_RADIUS = 0.26;
+const MIN_GROUND_NORMAL_Y = 0.25;
+const JUMP_ALLOWED_MAX_UPWARD_VELOCITY = 0.35;
+
+const FOOT_SAMPLE_OFFSETS = [
+  { x: 0, z: 0 },
+  { x: FOOT_SAMPLE_RADIUS, z: 0 },
+  { x: -FOOT_SAMPLE_RADIUS, z: 0 },
+  { x: 0, z: FOOT_SAMPLE_RADIUS },
+  { x: 0, z: -FOOT_SAMPLE_RADIUS },
+];
 
 export type CharacterControllerHandle = {
   getPosition: () => Vector3;
@@ -36,89 +49,116 @@ export const CharacterController = React.forwardRef<CharacterControllerHandle, C
   const { isJumping: isMobileJumping, movement: mobileMovement } = useMobileControls();
   const [, getKeys] = useKeyboardControls();
   const { camera } = useThree();
+
+  const [isGroundedVisual, setIsGroundedVisual] = useState(false);
   const [isSprinting, setIsSprinting] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
+
+  const groundedRef = useRef(false);
+  const isMovingRef = useRef(false);
+  const isSprintingRef = useRef(false);
+
   const targetRotation = useRef(0);
   const currentRotation = useRef(0);
   const cameraForward = useRef(new Vector3());
   const cameraRight = useRef(new Vector3());
   const movementDirection = useRef(new Vector3());
   const worldUp = useRef(new Vector3(0, 1, 0));
-  const [state, setState] = useState<CharacterState>({
-    moveSpeed: 0,
-    jumpForce: 0,
-    airControl: 0,
-    isGrounded: false,
-    velocity: { x: 0, y: 0, z: 0 },
-  });
 
   const controls = useCharacterControls();
+
+  const readHitToi = (hit: unknown): number => {
+    if (!hit || typeof hit !== 'object') return Infinity;
+    const candidate = hit as { timeOfImpact?: number; toi?: number };
+    if (typeof candidate.timeOfImpact === 'number') return candidate.timeOfImpact;
+    if (typeof candidate.toi === 'number') return candidate.toi;
+    return Infinity;
+  };
 
   React.useEffect(() => {
     if (enabled) return;
     setIsMoving(false);
     setIsSprinting(false);
+    setIsGroundedVisual(false);
+    isMovingRef.current = false;
+    isSprintingRef.current = false;
+    groundedRef.current = false;
   }, [enabled]);
 
   useFrame(() => {
     if (!enabled || !rigidBody.current) return;
 
-    // Cast multiple rays for better ground detection
+    const input = getKeys();
+    const shouldJump = input.jump || isMobileJumping;
+    const linvel = rigidBody.current.linvel();
     const translation = rigidBody.current.translation();
-    const rayLength = 3.5; // Increased length for better detection of distant ground
-    const rayDir = { x: 0, y: -1, z: 0 };
-    
-    // Cast rays from multiple points around the character
-    const rayOffsets = [
-      { x: 0, z: 0 },      // Center
-      { x: 0.3, z: 0 },    // Right
-      { x: -0.3, z: 0 },   // Left
-      { x: 0, z: 0.3 },    // Front
-      { x: 0, z: -0.3 },   // Back
-    ];
-    
+
+    const footY = translation.y + MODEL_BASE_Y;
+    const probeOriginY = footY + GROUND_PROBE_START;
+    const rayLength = GROUND_PROBE_START + GROUND_PROBE_MAX;
+
     let isGrounded = false;
-    let closestHit = null;
-    
-    for (const offset of rayOffsets) {
+    let closestHitT = Infinity;
+    let bestHitNormalY = -1;
+
+    for (const offset of FOOT_SAMPLE_OFFSETS) {
       const ray = new rapier.Ray(
-        { 
-          x: translation.x + offset.x, 
-          y: translation.y, 
-          z: translation.z + offset.z 
+        {
+          x: translation.x + offset.x,
+          y: probeOriginY,
+          z: translation.z + offset.z,
         },
-        rayDir
+        { x: 0, y: -1, z: 0 },
       );
-      
-      const hit = world.castRay(
+
+      const hit = world.castRayAndGetNormal(
         ray,
         rayLength,
         true,
         undefined,
         undefined,
         undefined,
-        rigidBody.current
+        rigidBody.current,
       );
-      
-      if (hit && (!closestHit || hit.toi < closestHit.toi)) {
-        closestHit = hit;
-        isGrounded = true;
+
+      const toi = readHitToi(hit);
+      const normalY = hit?.normal?.y ?? -1;
+
+      if (Number.isFinite(toi) && toi < closestHitT) {
+        closestHitT = toi;
+        bestHitNormalY = normalY;
       }
     }
 
-    const input = getKeys();
-    const shouldJump = input.jump || isMobileJumping;
-    const linvel = rigidBody.current.linvel();
-    // Update movement state
-    const horizontalSpeed = Math.hypot(linvel.x, linvel.z);
-    setIsMoving(horizontalSpeed > 0.5);
-    setIsSprinting(input.sprint && horizontalSpeed > 0.5);
+    if (closestHitT !== Infinity) {
+      const gapToGround = Math.max(0, closestHitT - GROUND_PROBE_START);
+      isGrounded =
+        gapToGround <= GROUND_PROBE_MAX
+        && bestHitNormalY >= MIN_GROUND_NORMAL_Y;
+    }
 
-    // Update rotation based on velocity
+    groundedRef.current = isGrounded;
+    if (isGroundedVisual !== isGrounded) {
+      setIsGroundedVisual(isGrounded);
+    }
+
+    const horizontalSpeed = Math.hypot(linvel.x, linvel.z);
+    const nextIsMoving = horizontalSpeed > 0.5;
+    const nextIsSprinting = input.sprint && nextIsMoving;
+
+    if (isMovingRef.current !== nextIsMoving) {
+      isMovingRef.current = nextIsMoving;
+      setIsMoving(nextIsMoving);
+    }
+
+    if (isSprintingRef.current !== nextIsSprinting) {
+      isSprintingRef.current = nextIsSprinting;
+      setIsSprinting(nextIsSprinting);
+    }
+
     if (Math.abs(linvel.x) > 0.1 || Math.abs(linvel.z) > 0.1) {
       targetRotation.current = Math.atan2(linvel.x, linvel.z);
-      
-      // Normalize angle difference to ensure shortest rotation path
+
       let angleDiff = targetRotation.current - currentRotation.current;
       if (angleDiff > Math.PI) {
         angleDiff -= Math.PI * 2;
@@ -127,32 +167,30 @@ export const CharacterController = React.forwardRef<CharacterControllerHandle, C
       }
       targetRotation.current = currentRotation.current + angleDiff;
     }
-    
-    // Smooth rotation
+
     if (modelRef.current) {
       currentRotation.current = MathUtils.lerp(
         currentRotation.current,
         targetRotation.current,
-        0.2
+        0.2,
       );
       modelRef.current.rotation.y = currentRotation.current;
     }
 
-    // Handle movement
     let movement = calculateMovement(input, controls.moveSpeed);
-    
-    // Override keyboard movement with mobile joystick if active
+
     if (Math.abs(mobileMovement.x) > 0 || Math.abs(mobileMovement.y) > 0) {
       movement = {
         sprint: false,
         normalizedX: mobileMovement.x,
-        normalizedZ: mobileMovement.y
+        normalizedZ: mobileMovement.y,
       };
     }
-    
+
     if (movement) {
       const sprintMultiplier = movement.sprint ? controls.sprintMultiplier : 1;
       const moveForce = controls.moveSpeed * (isGrounded ? 1 : controls.airControl);
+
       camera.getWorldDirection(cameraForward.current);
       cameraForward.current.y = 0;
       if (cameraForward.current.lengthSq() < 1e-6) {
@@ -175,10 +213,9 @@ export const CharacterController = React.forwardRef<CharacterControllerHandle, C
         movementDirection.current.x,
         movementDirection.current.z,
         moveForce * sprintMultiplier,
-        linvel.y
+        linvel.y,
       );
-      
-      // Smooth out the velocity changes
+
       if (isGrounded) {
         const smoothing = 0.25;
         velocity.x = velocity.x * smoothing + linvel.x * (1 - smoothing);
@@ -188,26 +225,16 @@ export const CharacterController = React.forwardRef<CharacterControllerHandle, C
       rigidBody.current.setLinvel(velocity, true);
     }
 
-    // Handle jumping
-    if (shouldJump && isGrounded) {
-      // Reset vertical velocity before jumping
+    if (shouldJump && isGrounded && linvel.y <= JUMP_ALLOWED_MAX_UPWARD_VELOCITY) {
       rigidBody.current.setLinvel(
         { x: linvel.x, y: 0, z: linvel.z },
-        true
+        true,
       );
       rigidBody.current.applyImpulse(
         createJumpImpulse(controls.jumpForce, { y: linvel.y }),
-        true
+        true,
       );
     }
-
-    setState({ 
-      moveSpeed: controls.moveSpeed, 
-      jumpForce: controls.jumpForce, 
-      airControl: controls.airControl, 
-      isGrounded, 
-      velocity: linvel 
-    });
   });
 
   useImperativeHandle(ref, () => ({
@@ -216,10 +243,10 @@ export const CharacterController = React.forwardRef<CharacterControllerHandle, C
       return new Vector3(
         translation?.x || 0,
         translation?.y || 0,
-        translation?.z || 0
+        translation?.z || 0,
       );
     },
-    getIsGrounded: () => state.isGrounded,
+    getIsGrounded: () => groundedRef.current,
     setPosition: (position: Vector3) => {
       rigidBody.current?.setTranslation(position, true);
     },
@@ -230,14 +257,16 @@ export const CharacterController = React.forwardRef<CharacterControllerHandle, C
       rigidBody.current?.setTranslation(position, true);
       rigidBody.current?.setLinvel({ x: 0, y: 0, z: 0 }, true);
       rigidBody.current?.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      groundedRef.current = false;
+      setIsGroundedVisual(false);
     },
-  }), [state.isGrounded]);
+  }), []);
 
   return (
     <RigidBody
       ref={rigidBody}
       colliders={false}
-      mass={10}
+      mass={PLAYER_MASS}
       position={spawn}
       name="player"
       enabledRotations={[false, false, false]}
@@ -251,12 +280,12 @@ export const CharacterController = React.forwardRef<CharacterControllerHandle, C
       maxCcdSubsteps={2}
       type={enabled ? 'dynamic' : 'fixed'}
     >
-      <CapsuleCollider args={[0.8, 0.4]} position={[0, -0.2, 0]} />
-      <group ref={modelRef} position={[0, -1.15, 0]} scale={1.5} visible={enabled}>
-        <CharacterModel 
-          isMoving={isMoving} 
-          isSprinting={isSprinting} 
-          isGrounded={state.isGrounded} 
+      <CapsuleCollider args={[CAPSULE_HALF_HEIGHT, CAPSULE_RADIUS]} position={[0, CAPSULE_OFFSET_Y, 0]} />
+      <group ref={modelRef} position={[0, MODEL_BASE_Y, 0]} scale={MODEL_SCALE} visible={enabled}>
+        <CharacterModel
+          isMoving={isMoving}
+          isSprinting={isSprinting}
+          isGrounded={isGroundedVisual}
         />
       </group>
     </RigidBody>

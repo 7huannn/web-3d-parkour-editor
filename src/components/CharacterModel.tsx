@@ -1,6 +1,6 @@
 import { useGLTF, useAnimations } from '@react-three/drei';
 import { useEffect, useRef, useState } from 'react';
-import { Group } from 'three';
+import { Box3, Group } from 'three';
 
 type CharacterModelProps = {
   isMoving: boolean;
@@ -11,6 +11,7 @@ type CharacterModelProps = {
 export function CharacterModel({ isMoving, isSprinting, isGrounded }: CharacterModelProps) {
   const group = useRef<Group>(null);
   const [currentAnimation, setCurrentAnimation] = useState<string | null>(null);
+  const [feetOffsetY, setFeetOffsetY] = useState(0);
   const { scene, animations } = useGLTF('/models/character.glb', true);
   const { actions } = useAnimations(animations, group);
 
@@ -20,6 +21,13 @@ export function CharacterModel({ isMoving, isSprinting, isGrounded }: CharacterM
       child.receiveShadow = true;
     }
   });
+
+  useEffect(() => {
+    const bounds = new Box3().setFromObject(scene);
+    if (Number.isFinite(bounds.min.y)) {
+      setFeetOffsetY(-bounds.min.y);
+    }
+  }, [scene]);
 
   useEffect(() => {
     let targetAnimation = 'IDLE';
@@ -57,5 +65,9 @@ export function CharacterModel({ isMoving, isSprinting, isGrounded }: CharacterM
     
   }, [actions, currentAnimation, isMoving, isSprinting, isGrounded]);
   
-  return <primitive ref={group} object={scene} />;
+  return (
+    <group ref={group} position={[0, feetOffsetY, 0]}>
+      <primitive object={scene} />
+    </group>
+  );
 }
